@@ -35,7 +35,7 @@ class RobotTeleopController(BaseTeleopController, ABC):
             floating_base=floating_base,
             R_headset_world=R_headset_world,
             scale_factor=scale_factor,
-            q_init=kwargs.get("q_init"),
+            q_init=kwargs.get("q_init"), # type: ignore
             dt=1.0 / control_rate_hz,
             enable_log_data=enable_log_data,
             log_dir=log_dir,

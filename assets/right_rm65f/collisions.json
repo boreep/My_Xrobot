@@ -1,0 +1,12 @@
+[
+    ["fixed_box", "right_ee_link"],
+    ["fixed_box", "right_link_6"],
+    ["fixed_box", "right_link_6"],
+    ["right_link_3", "right_ee_link"],
+    ["right_link_3", "right_link_6"],
+    ["right_link_3", "right_link_5"],
+    ["right_link_2", "right_link_6"],
+    ["right_link_2", "right_ee_link"],
+    ["right_base_link", "right_link_2"]
+
+]

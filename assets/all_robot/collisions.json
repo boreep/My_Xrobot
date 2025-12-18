@@ -1,0 +1,18 @@
+[
+    ["right_link_2", "right_ee_link"],
+    ["right_link_3", "right_ee_link"],
+
+    ["left_link_2", "left_ee_link"],
+    ["left_link_3", "left_ee_link"],
+
+    ["left_ee_link", "right_ee_link"],
+    ["left_link_3", "right_ee_link"],
+    ["right_link_3", "left_ee_link"],
+    ["left_link_4", "right_link_4"],
+    ["left_link_5", "right_link_5"],
+
+    ["body_link", "right_ee_link"],
+    ["body_link", "left_ee_link"],
+    ["body_link", "right_link_4"],
+    ["body_link", "left_link_4"]
+]

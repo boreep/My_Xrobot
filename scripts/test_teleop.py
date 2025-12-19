@@ -10,7 +10,7 @@ from xrobotoolkit_teleop.simulation.placo_teleop_controller import (
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 
-from xrobotoolkit_teleop.hardware.interface.rm65f import (
+from xrobotoolkit_teleop.hardware.allrobot_controller import (
     LEFT_INITIAL_JOINT_DEG,
     RIGHT_INITIAL_JOINT_DEG,
     ARM_VELOCITY_LIMITS

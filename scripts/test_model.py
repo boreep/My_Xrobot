@@ -47,9 +47,12 @@ dt = 0.005
 solver.dt = dt
 last_targets = []
 last_positions = []
-current_position = robot
+current_position = robot.get_T_world_frame("right_ee_link")[0:3, 3]
+current_qpos = robot.state.q
 last_target_t = 0
 
+print(current_position)
+print(current_qpos)
 
 
 
@@ -87,6 +90,7 @@ def loop():
         last_positions = last_positions[-50:]
         points_viz("positions", np.array(last_positions), color=0x5C2FC2)
         
-
+    
+        
 run_loop()
 

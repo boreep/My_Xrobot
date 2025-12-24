@@ -214,7 +214,7 @@ class BaseTeleopController(abc.ABC):
         # 处理每个操作器的控制逻辑
         for src_name, config in self.manipulator_config.items():
             xr_grip_val = self.xr_client.get_key_value_by_name(config["control_trigger"])
-            self.active[src_name] = xr_grip_val > 0.9
+            self.active[src_name] = xr_grip_val > 0.8
 
             if self.active[src_name]:
                 if self.ref_ee_xyz[src_name] is None:

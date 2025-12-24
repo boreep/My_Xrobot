@@ -84,7 +84,7 @@ class RM65Controller(Node):
 
     def init_arm_controller(self):
         """发送初始化位置"""
-        self.get_logger().info(f"arm{self.arm_side}正在初始化RM65...")
+        self.get_logger().info(f"{self.arm_side}正在初始化RM65...")
         
         self.movej_msg = Movej()
         self.movej_msg.speed=20
@@ -104,10 +104,8 @@ class RM65Controller(Node):
         self.pub_movej.publish(self.movej_msg)
         
         # 5. 等待确认
-        self.get_logger().info(f"{self.arm_side}等待RM65初始化完成...3秒")
-        time.sleep(3.0)  # 等待 3 秒确认
-        self.get_logger().info(f"{self.arm_side}RM65初始化完成。")
-        
+        self.get_logger().info(f"{self.arm_side}等待RM65初始角度运动完成")
+    
     def arm_state_callback(self, msg: JointState):
         """
         Callback function to handle joint state updates.
@@ -147,7 +145,7 @@ class RM65Controller(Node):
         self.gripper_ctrl_msg.header = Header()
         self.gripper_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
         self.gripper_ctrl_msg.header.frame_id = "gripper_link"
-        self.gripper_ctrl_msg.data = self.q_des_gripper
+        self.gripper_ctrl_msg.data = self.q_des_gripper[0]
 
         self.gripper_pub.publish(self.gripper_ctrl_msg)
 

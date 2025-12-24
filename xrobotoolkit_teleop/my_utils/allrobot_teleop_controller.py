@@ -82,12 +82,18 @@ class AllRobotTeleopController(RobotTeleopController):
         q_init: np.ndarray = np.concatenate([LEFT_INITIAL_JOINT_DEG,RIGHT_INITIAL_JOINT_DEG]),
         visualize_placo: bool = False,
         control_rate_hz: int = 100,
+        self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
         log_dir: str = "logs/allrobot",
         log_freq: float = 20,
         # 删除 enable_camera 和 camera_fps 参数
     ):
 
+        self.control_rate_hz=control_rate_hz
+        # 我们需要一个 Executor 来管理所有 RM65Controller 节点的通信
+        self.executor = None
+        self._ros_spin_thread = None
+        
         super().__init__(
             robot_urdf_path=robot_urdf_path,
             manipulator_config=manipulator_config,
@@ -97,18 +103,12 @@ class AllRobotTeleopController(RobotTeleopController):
             q_init=q_init,
             visualize_placo=visualize_placo,
             control_rate_hz=control_rate_hz,
+            self_collision_avoidance_enabled=self_collision_avoidance_enabled,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
             log_freq=log_freq,
 
         )
-
-        
-        self.control_rate_hz=control_rate_hz
-        # 我们需要一个 Executor 来管理所有 RM65Controller 节点的通信
-        self.executor = MultiThreadedExecutor()
-        self._ros_spin_thread = None
-
 
     def _placo_setup(self):
         super()._placo_setup()
@@ -126,9 +126,10 @@ class AllRobotTeleopController(RobotTeleopController):
 
     def _robot_setup(self):
         
-        if hasattr(self, 'executor') and self.executor is not None:
-            return
-
+        if self.executor is not None:
+            raise ValueError("Executor already initialized!")
+        
+        self.executor = MultiThreadedExecutor()
         self.arm_controllers: Dict[str, RM65Controller] = {}
         for arm_name in ["left_arm", "right_arm"]:
             arm_prefix = arm_name.replace("_arm", "")
@@ -144,6 +145,15 @@ class AllRobotTeleopController(RobotTeleopController):
         self._ros_spin_thread.start()
         print("ROS 通信线程已启动")
 
+
+    def _ros_spin_loop(self):
+            """后台线程：持续运行 ROS 事件循环"""
+            try:
+                self.executor.spin() # pyright: ignore[reportOptionalMemberAccess]
+            except Exception as e:
+                print(f"ROS2 Executor 线程错误: {e}")
+            print("ROS2 Executor 线程已停止。")
+            
     def wait_for_hardware(self, timeout_sec=10.0):
             """供外部调用：阻塞等待直到收到硬件数据"""
             print("正在等待机械臂心跳数据...")
@@ -159,23 +169,15 @@ class AllRobotTeleopController(RobotTeleopController):
             print("所有机械臂已连接！")
             return True
 
-    def _ros_spin_loop(self):
-            """后台线程：持续运行 ROS 事件循环"""
-            try:
-                self.executor.spin()
-            except Exception as e:
-                print(f"ROS executor error: {e}")
-            print("ROS 2 Executor thread stopped.")
-
     def run(self):
 
-            super().run()
+        super().run()
             
 
     def _update_robot_state(self):
         """Reads current joint states from both arm controllers and updates Placo."""
         for arm_name, controller in self.arm_controllers.items():
-            self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos
+            self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
 
         
 

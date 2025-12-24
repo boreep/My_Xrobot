@@ -13,8 +13,6 @@ from rm_ros_interfaces.msg import Jointpos, Movej
 from my_interfaces.msg import HeaderFloat32
 import time
 
-from xrobotoolkit_teleop.my_utils.gripper2hand import Gripper2HandController
-
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
 RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, 0.0]))
 LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
@@ -35,17 +33,17 @@ class RM65Controller(Node):
         self,
         arm_side: str = "right_arm",
         gripper_control_topic: str = "gripper_cmd",
-        rate_hz: float = 100.0,
+        # rate_hz: float = 100.0,
         follow_mode: bool = False,
     ):
         super().__init__(f'{arm_side}_controller')
         
-    # 手部controller
-        self.handcontroller = Gripper2HandController(
-            arm_side=arm_side,
-            gripper_sub_topic=gripper_control_topic,
-            rate_hz=20.0,
-        )
+    # # 手部controller，已舍弃到C++
+    #     self.handcontroller = Gripper2HandController(
+    #         arm_side=arm_side,
+    #         gripper_sub_topic=gripper_control_topic,
+    #         rate_hz=20.0,
+    #     )
         
         # QoS Profile meant to mimic queue_size=1
         qos = QoSProfile(depth=1)
@@ -80,13 +78,13 @@ class RM65Controller(Node):
 
         self.gripper_ctrl_msg = HeaderFloat32()
         
-        self.init_arm_controller
+        self.init_arm_controller()
         # Create a timer to run the control loop
         # self.timer = self.create_timer(1.0 / rate_hz, self.control_loop)
 
     def init_arm_controller(self):
         """发送初始化位置"""
-        self.get_logger().info("正在初始化RM65...")
+        self.get_logger().info(f"arm{self.arm_side}正在初始化RM65...")
         
         self.movej_msg = Movej()
         self.movej_msg.speed=20
@@ -106,9 +104,9 @@ class RM65Controller(Node):
         self.pub_movej.publish(self.movej_msg)
         
         # 5. 等待确认
-        self.get_logger().info("等待RM65初始化完成...5秒")
-        time.sleep(5.0)  # 等待 3 秒确认
-        self.get_logger().info("RM65初始化完成。")
+        self.get_logger().info(f"{self.arm_side}等待RM65初始化完成...3秒")
+        time.sleep(3.0)  # 等待 3 秒确认
+        self.get_logger().info(f"{self.arm_side}RM65初始化完成。")
         
     def arm_state_callback(self, msg: JointState):
         """
@@ -128,7 +126,7 @@ class RM65Controller(Node):
 
     def publish_arm_control(self):
         """
-        Publishes motor control messages.
+        Publishes arm control messages.
         """
         if self.q_des is None:
             return
@@ -141,7 +139,9 @@ class RM65Controller(Node):
         self.pub.publish(self.arm_ctrl_msg)
 
     def publish_gripper_control(self):
-
+        """
+        Publishes gripper control messages.
+        """
         if self.q_des_gripper is None:
             return
         self.gripper_ctrl_msg.header = Header()
@@ -151,12 +151,12 @@ class RM65Controller(Node):
 
         self.gripper_pub.publish(self.gripper_ctrl_msg)
 
-    def control_loop(self):
-        """
-        Replaces the main loop. Called by timer.
-        """
-        self.publish_arm_control()
-        self.publish_gripper_control()
+    # def control_loop(self):
+    #     """
+    #     Replaces the main loop. Called by timer.
+    #     """
+    #     self.publish_arm_control()
+    #     self.publish_gripper_control()
         
     def stop(self):
         """
@@ -166,13 +166,12 @@ class RM65Controller(Node):
         self.destroy_publisher(self.gripper_pub)
         self.destroy_subscription(self.sub)
         
-        self.handcontroller.stop()
 
         
 
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
-# ... (保留你上面的 imports 和 class RM65Controller 定义) ...
+# ...如果要单独运行测试，需要取消上面关于control_loop和timer的注释 ...
 
 def main(args=None):
     # 1. 初始化 ROS 2
@@ -190,14 +189,14 @@ def main(args=None):
         arm_node = RM65Controller(
             arm_side=target_arm,
             gripper_control_topic="gripper_cmd",
-            rate_hz=100.0,    # 机械臂控制频率
+            # rate_hz=100.0,    # 机械臂控制频率
             follow_mode=False # 是否开启跟随模式
         )
 
         # 3. 【关键步骤】获取内部创建的手部控制节点
         # 因为 handcontroller 是在该类内部实例化的另一个 Node 对象，
         # 它必须也被加入到 executor 才能工作。
-        hand_node = arm_node.handcontroller
+        # hand_node = arm_node.handcontroller
 
         # 4. 创建多线程执行器
         # 这允许机械臂(100Hz)和灵巧手(20Hz)的定时器并行运行，互不阻塞
@@ -205,7 +204,7 @@ def main(args=None):
         
         # 5. 将两个节点都加入执行器
         executor.add_node(arm_node)
-        executor.add_node(hand_node)
+        # executor.add_node(hand_node)
 
         print("--------------------------------------------------")
         print(f"RM65 组合控制器已启动 [{target_arm}]")

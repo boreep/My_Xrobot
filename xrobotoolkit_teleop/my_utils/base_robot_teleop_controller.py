@@ -22,12 +22,12 @@ class RobotTeleopController(BaseTeleopController, ABC):
         R_headset_world: np.ndarray,
         floating_base: bool,
         scale_factor: float,
+        q_init: np.ndarray,
         visualize_placo: bool,
         control_rate_hz: int,
         enable_log_data: bool,
         log_dir: str,
         log_freq: float,
-        **kwargs,
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -35,7 +35,7 @@ class RobotTeleopController(BaseTeleopController, ABC):
             floating_base=floating_base,
             R_headset_world=R_headset_world,
             scale_factor=scale_factor,
-            q_init=kwargs.get("q_init"), # type: ignore
+            q_init=q_init,
             dt=1.0 / control_rate_hz,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
@@ -167,7 +167,6 @@ class RobotTeleopController(BaseTeleopController, ABC):
 
     def run(self):
         """Main entry point that starts all threads."""
-        self._robot_setup()
 
         self._start_time = time.time()
         self._stop_event = threading.Event()

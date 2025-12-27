@@ -50,6 +50,7 @@ def main(
     #     raise TimeoutError("尝试连接失败，超时")
 
     # 启动控制器运行
+    controller.init_arm()
     controller.run()
 
 

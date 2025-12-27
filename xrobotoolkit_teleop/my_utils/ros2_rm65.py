@@ -78,13 +78,12 @@ class RM65Controller(Node):
 
         self.gripper_ctrl_msg = HeaderFloat32()
         
-        self.init_arm_controller()
         # Create a timer to run the control loop
         # self.timer = self.create_timer(1.0 / rate_hz, self.control_loop)
 
-    def init_arm_controller(self):
+    def init_arm_cmd(self):
         """发送初始化位置"""
-        self.get_logger().info(f"{self.arm_side}正在初始化RM65...")
+        self.get_logger().info(f"{self.arm_side}正在发布初始化位置指令...")
         
         self.movej_msg = Movej()
         self.movej_msg.speed=20

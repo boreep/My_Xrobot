@@ -110,14 +110,6 @@ cd test
 python test_teleop.py
 ```
 
-### 硬件控制
-
-使用ROS2节点控制真实机器人:
-
-```bash
-cd xrobotoolkit_teleop/my_utils
-python ros2_rm65.py
-```
 
 ## 配置参数
 

@@ -168,6 +168,11 @@ class AllRobotTeleopController(RobotTeleopController):
                 
             print("所有机械臂已连接！")
             return True
+    
+    def init_arm(self):
+        """发送初始化位置"""
+        for arm_name, controller in self.arm_controllers.items():
+            controller.init_arm_cmd()
 
     def run(self):
 

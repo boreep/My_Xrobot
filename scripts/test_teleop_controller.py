@@ -7,8 +7,6 @@ import tyro
 import numpy as np
 from xrobotoolkit_teleop.my_utils.allrobot_teleop_controller import (
     AllRobotTeleopController,
-    DEFAULT_ALLROBOT_URDF_PATH,
-    DEFAULT_SCALE_FACTOR,
     DEFAULT_MANIPULATOR_CONFIG
 )
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
@@ -16,7 +14,6 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 from xrobotoolkit_teleop.my_utils.ros2_rm65 import (
     LEFT_INITIAL_JOINT_DEG,
     RIGHT_INITIAL_JOINT_DEG,
-    ARM_VELOCITY_LIMITS
 )
 
 

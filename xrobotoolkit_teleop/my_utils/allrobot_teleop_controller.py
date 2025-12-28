@@ -21,7 +21,7 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 
 # Default paths and configurations for R1 Lite dual arm
 DEFAULT_ALLROBOT_URDF_PATH = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf")
-DEFAULT_SCALE_FACTOR = 1.13
+DEFAULT_SCALE_FACTOR = 1.15
 CONTROLLER_DEADZONE = 0.1
 
 
@@ -123,7 +123,8 @@ class AllRobotTeleopController(RobotTeleopController):
                 self.placo_robot.get_joint_offset(arm_joint_names[0]),
                 self.placo_robot.get_joint_offset(arm_joint_names[-1]) + 1,
             )
-
+        print(f"[DEBUG] {arm_name} 的关节切片索引范围: {self.placo_arm_joint_slice[arm_name]}")
+        
     def _robot_setup(self):
         
         if self.executor is not None:

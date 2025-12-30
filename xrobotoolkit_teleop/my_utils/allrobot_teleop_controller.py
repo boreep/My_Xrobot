@@ -23,7 +23,7 @@ from xrobotoolkit_teleop.utils.terminalcolor import TerminalColor
 
 # Default paths and configurations for R1 Lite dual arm
 DEFAULT_ALLROBOT_URDF_PATH = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf")
-DEFAULT_SCALE_FACTOR = 1.15
+DEFAULT_SCALE_FACTOR = 1.13
 CONTROLLER_DEADZONE = 0.1
 
 
@@ -145,7 +145,7 @@ class AllRobotTeleopController(RobotTeleopController):
             arm_prefix = arm_name.replace("_arm", "")
             controller = RM65Controller(
                 arm_side=arm_name,
-                gripper_control_topic="gripper_cmd",
+
             )
             self.arm_controllers[arm_name] = controller
             self.executor.add_node(controller)

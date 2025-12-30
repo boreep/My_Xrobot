@@ -12,7 +12,7 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from xrobotoolkit_teleop.my_utils.ros2_data_logger import ROSDataLogger
+from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import DualArmDataLogger
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
@@ -58,7 +58,7 @@ class BaseController(abc.ABC):
         self.enable_log_data = enable_log_data
         self.log_dir = log_dir
         if enable_log_data:
-            self.data_logger = ROSDataLogger(log_root_dir=log_dir)
+            self.data_logger = DualArmDataLogger(log_root_dir=log_dir)
 
         # 初始化位姿参考变量
         self.ref_ee_xyz: Dict[str, Any] = {name: None for name in manipulator_config.keys()}
@@ -388,10 +388,6 @@ class BaseController(abc.ABC):
             else:
                 raise ValueError(f"Unsupported gripper type: {gripper_type}")
 
-    def _log_data(self):
-        """记录机器人当前状态数据"""
-        if self.enable_log_data:
-            raise NotImplementedError
 
     # ---------------------------------------------------------
     # --- 抽象方法 (必须由子类实现) ---

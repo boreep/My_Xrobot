@@ -33,7 +33,6 @@ class RM65Controller(Node):
     def __init__(
         self,
         arm_side: str = "right_arm",
-        gripper_control_topic: str = "gripper_cmd",
         # rate_hz: float = 100.0,
         follow_mode: bool = False,
     ):
@@ -51,9 +50,9 @@ class RM65Controller(Node):
 
         self.pub = self.create_publisher(Jointpos, f"{arm_side}/rm_driver/movej_canfd_cmd", qos)
         self.pub_movej = self.create_publisher(Movej, f"{arm_side}/rm_driver/movej_cmd", qos)
-        self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target", qos)
+        self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target_pose", qos)
         
-        self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/{gripper_control_topic}", qos)
+        self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/gripper_cmd", qos)
           
         self.sub = self.create_subscription(
             JointState, 
@@ -227,7 +226,6 @@ def main(args=None):
         
         arm_node = RM65Controller(
             arm_side=target_arm,
-            gripper_control_topic="gripper_cmd",
             # rate_hz=100.0,    # 机械臂控制频率
             follow_mode=False # 是否开启跟随模式
         )

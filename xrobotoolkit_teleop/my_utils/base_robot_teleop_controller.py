@@ -7,9 +7,9 @@ import meshcat.transformations as tf
 import numpy as np
 
 from xrobotoolkit_teleop.my_utils.base_controller import BaseController
-from xrobotoolkit_teleop.my_utils.ros2_data_logger import (
+from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import (
     RecorderState,
-    ROSDataLogger
+    DualArmDataLogger
 )
 
 class RobotTeleopController(BaseController, ABC):
@@ -129,34 +129,30 @@ class RobotTeleopController(BaseController, ABC):
         print("Control loop has stopped.")
 
 
+# 假设这是在你的 VR 控制 Loop 中
     def _handle_logging_logic(self):
-            # 1. 获取信号
-            b_button_state = self.xr_client.get_button_state_by_name("B")
-            is_active = all(self.active.values()) 
+        # 1. 获取信号
+        b_button_state = self.xr_client.get_button_state_by_name("B")
+        
+        # 这里的 is_active 可能是死区开关或者手柄检测状态
+        # 如果 is_active 为 False，Logger 内部会自动丢弃接收到的数据，实现"暂停"效果
+        current_is_active = all(self.active.values()) 
+        
+        # 实时同步 Active 状态给 Logger
+        self.data_logger.update_active_status(current_is_active)
 
-            # 2. B 按钮生命周期控制 (Start / Stop)
-            # 上升沿
-            if b_button_state and not self._prev_b_button_state:
-                # 防止重复触发
-                if self.data_logger.current_state == RecorderState.IDLE:
-                    self.data_logger.start_episode()
+        # 2. B 按钮生命周期控制 (Start / Stop)
+        # 上升沿：开始新的 Episode
+        if b_button_state and not self._prev_b_button_state:
+            if self.data_logger.current_state == RecorderState.IDLE:
+                self.data_logger.start_episode()
 
-            # 下降沿
-            elif not b_button_state and self._prev_b_button_state:
-                # 只要不是 IDLE 就可以保存
-                if self.data_logger.current_state != RecorderState.IDLE:
-                    self.data_logger.stop_episode()
-            
-            self._prev_b_button_state = b_button_state
-
-            # 3. 状态更新 (Pause / Record)
-            # 这行代码每帧都跑，负责在 PAUSED 和 RECORDING 之间反复横跳
-            # 如果是 IDLE 状态，这个函数内部会直接 return，所以很安全
-            self.data_logger.update_active_status(is_active)
-
-    def _log_data(self):
-        """Logs the current state of the robot."""
-        pass
+        # 下降沿：结束并保存 Episode
+        elif not b_button_state and self._prev_b_button_state:
+            if self.data_logger.current_state != RecorderState.IDLE:
+                self.data_logger.stop_episode()
+        
+        self._prev_b_button_state = b_button_state
 
     def _data_logging_thread(self, stop_event: threading.Event):
         """Dedicated thread for data logging."""

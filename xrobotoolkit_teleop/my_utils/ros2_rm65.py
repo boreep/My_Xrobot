@@ -87,32 +87,58 @@ class RM65Controller(Node):
         self.gripper_ctrl_msg = HeaderFloat32()
         self.gripper_ctrl_msg.header=Header()
         
+        if self.arm_side == "right_arm":
+            self.init_pos=RIGHT_INITIAL_JOINT_DEG.tolist()
+        elif self.arm_side == "left_arm":
+            self.init_pos=LEFT_INITIAL_JOINT_DEG.tolist()    
+        
         # Create a timer to run the control loop
         # self.timer = self.create_timer(1.0 / 20, self.control_loop)
 
     def init_arm_cmd(self):
-        """发送初始化位置"""
-        self.get_logger().info(f"{self.arm_side}正在发布初始化位置指令...")
-        
+
+        # 1. 等待获取状态 (静默等待，不输出过程日志)
+        wait_count = 0
+        while self.qpos is None and wait_count < 20:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            wait_count += 1
+
+        # 2. 准备指令
         self.movej_msg = Movej()
-        self.movej_msg.speed=20
-        self.movej_msg.dof=6
-        self.movej_msg.joint=[0.0]*6
-        self.movej_msg.trajectory_connect=1
-        self.movej_msg.block=True
+        self.movej_msg.speed = 20
+        self.movej_msg.dof = 6
+        self.movej_msg.block = True 
+
+        # 3. 距离判断
+        go_zero_first = True 
         
+        if self.qpos is not None:
+            curr_arr = np.array(self.qpos)
+            # 直接计算距离
+            dist_to_zero = np.linalg.norm(curr_arr - np.zeros(6))
+            dist_to_init = np.linalg.norm(curr_arr - np.array(self.init_pos))
+            
+            # 仅输出最终决策
+            if dist_to_init < dist_to_zero:
+                # self.get_logger().info(f"[{self.arm_side}] 距离检测：跳过回零，直达初始位")
+                go_zero_first = False
+
+        else:
+            # 异常情况保留 Warning
+            self.get_logger().warn(f"[{self.arm_side}] 状态获取超时，强制执行回零流程")
+
+        # 4. 发送指令
+        if go_zero_first:
+            self.movej_msg.joint = [0.0] * 6
+            self.movej_msg.trajectory_connect = 1
+            self.pub_movej.publish(self.movej_msg)
+        
+        self.movej_msg.joint = self.init_pos
+        self.movej_msg.trajectory_connect = 0
         self.pub_movej.publish(self.movej_msg)
         
-        if self.arm_side == "right_arm":
-            self.movej_msg.joint=RIGHT_INITIAL_JOINT_DEG.tolist()
-        elif self.arm_side == "left_arm":
-            self.movej_msg.joint=LEFT_INITIAL_JOINT_DEG.tolist()
-        self.movej_msg.block=True
-        self.movej_msg.trajectory_connect=0
-        self.pub_movej.publish(self.movej_msg)
-        
-        # 5. 等待确认
-        self.get_logger().info(f"{self.arm_side}等待RM65初始角度运动完成")
+        # 5. 完成
+        self.get_logger().info(f"{self.arm_side} 初始化运动指令发送完毕")
     
     def arm_state_callback(self, msg: JointState):
         """

@@ -1,6 +1,6 @@
 import numpy as np
 import xrobotoolkit_sdk as xrt
-
+from xrobotoolkit_teleop.utils.terminalcolor import TerminalColor
 
 class XrClient:
     """Client for the XrClient SDK to interact with XR devices."""
@@ -8,7 +8,7 @@ class XrClient:
     def __init__(self):
         """Initializes the XrClient and the SDK."""
         xrt.init()
-        print("XRoboToolkit SDK initialized.")
+        print(f"{TerminalColor.OKGREEN}XRoboToolkit SDK initialized.{TerminalColor.ENDC}")
 
     def get_pose_by_name(self, name: str) -> np.ndarray:
         """Returns the pose of the specified device by name.
@@ -22,7 +22,7 @@ class XrClient:
             return xrt.get_headset_pose()
         else:
             raise ValueError(
-                f"Invalid name: {name}. Valid names are: 'left_controller', 'right_controller', 'headset'."
+                f"{TerminalColor.FAIL}Invalid name: {name}. Valid names are: 'left_controller', 'right_controller', 'headset'.{TerminalColor.ENDC}"
             )
 
     def get_key_value_by_name(self, name: str) -> float:
@@ -39,7 +39,7 @@ class XrClient:
             return xrt.get_right_grip()
         else:
             raise ValueError(
-                f"Invalid name: {name}. Valid names are: 'left_trigger', 'right_trigger', 'left_grip', 'right_grip'."
+                f"{TerminalColor.FAIL}Invalid name: {name}. Valid names are: 'left_trigger', 'right_trigger', 'left_grip', 'right_grip'.{TerminalColor.ENDC}"
             )
 
     def get_button_state_by_name(self, name: str) -> bool:
@@ -66,8 +66,9 @@ class XrClient:
             return xrt.get_right_axis_click()
         else:
             raise ValueError(
-                f"Invalid name: {name}. Valid names are: 'A', 'B', 'X', 'Y', "
+                f"{TerminalColor.FAIL}Invalid name: {name}. Valid names are: 'A', 'B', 'X', 'Y', "
                 "'left_menu_button', 'right_menu_button', 'left_axis_click', 'right_axis_click'."
+                f"{TerminalColor.ENDC}"
             )
 
     def get_timestamp_ns(self) -> int:
@@ -89,7 +90,7 @@ class XrClient:
                 return None
             return xrt.get_right_hand_tracking_state()
         else:
-            raise ValueError(f"Invalid hand: {hand}. Valid hands are: 'left', 'right'.")
+            raise ValueError(f"{TerminalColor.FAIL}Invalid hand: {hand}. Valid hands are: 'left', 'right'.{TerminalColor.ENDC}")
 
     def get_joystick_state(self, controller: str) -> list[float]:
         """Returns the joystick state for the specified controller.
@@ -101,7 +102,7 @@ class XrClient:
         elif controller.lower() == "right":
             return xrt.get_right_axis()
         else:
-            raise ValueError(f"Invalid controller: {controller}. Valid controllers are: 'left', 'right'.")
+            raise ValueError(f"{TerminalColor.FAIL}Invalid controller: {controller}. Valid controllers are: 'left', 'right'.{TerminalColor.ENDC}")
 
     def get_motion_tracker_data(self) -> dict:
         """Returns a dictionary of motion tracker data, where the keys are the tracker serial numbers.

@@ -19,20 +19,12 @@ from xrobotoolkit_teleop.utils.geometry import (
     R_HEADSET_TO_WORLD,
 )
 from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
+from xrobotoolkit_teleop.utils.terminalcolor import TerminalColor
 
 # Default paths and configurations for R1 Lite dual arm
 DEFAULT_ALLROBOT_URDF_PATH = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf")
 DEFAULT_SCALE_FACTOR = 1.15
 CONTROLLER_DEADZONE = 0.1
-
-class TerminalColor:
-    HEADER = '\033[95m' # 紫色
-    OKBLUE = '\033[94m' # 蓝色
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m' # 黄色
-    FAIL = '\033[91m'    # 红色
-    ENDC = '\033[0m'     # 重置颜色
-    BOLD = '\033[1m'     # 加粗
 
 
 def add_prefix_to_velocity_limits(prefix: str):

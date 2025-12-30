@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 import rclpy
@@ -17,13 +18,12 @@ from xrobotoolkit_teleop.my_utils.ros2_rm65 import (
 )
 
 
-
 def main(
     # robot_urdf_path: 机器人URDF模型文件路径，默认为RM65左臂模型
     robot_urdf_path: str = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf"),
     # robot_urdf_path: str = os.path.join(ASSET_PATH, "right_rm65f/right_rm65.urdf"),
-    # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.5
-    scale_factor: float = 1.13,
+    # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.13
+    scale_factor: float = 1.2,
 ):
     rclpy.init()
 
@@ -36,6 +36,7 @@ def main(
         scale_factor=scale_factor,            # 控制缩放因子
         q_init=q_init,                        # 添加这一行来设置初始关节角度
         visualize_placo=True,
+        control_rate_hz=50,
         self_collision_avoidance_enabled=True,
     )
     # 可选的关节约束任务（当前被注释掉）

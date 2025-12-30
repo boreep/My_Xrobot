@@ -6,10 +6,13 @@ from typing import Dict
 import meshcat.transformations as tf
 import numpy as np
 
-from xrobotoolkit_teleop.common.base_teleop_controller import BaseTeleopController
+from xrobotoolkit_teleop.my_utils.base_controller import BaseController
+from xrobotoolkit_teleop.my_utils.ros2_data_logger import (
+    RecorderState,
+    ROSDataLogger
+)
 
-
-class RobotTeleopController(BaseTeleopController, ABC):
+class RobotTeleopController(BaseController, ABC):
     """
     An abstract base class for hardware teleoperation controllers that consolidates
     common logic for threading, logging, and visualization.
@@ -28,7 +31,6 @@ class RobotTeleopController(BaseTeleopController, ABC):
         self_collision_avoidance_enabled: bool,
         enable_log_data: bool,
         log_dir: str,
-        log_freq: float,
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -41,19 +43,19 @@ class RobotTeleopController(BaseTeleopController, ABC):
             self_collision_avoidance_enabled=self_collision_avoidance_enabled,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
-            log_freq=log_freq,
         )
 
         self._start_time = 0
         self.control_rate_hz = control_rate_hz
-        self.log_freq = log_freq
         self.visualize_placo = visualize_placo
 
         if self.visualize_placo:
             self._init_placo_viz()
 
+        #数据集记录相关
         self._prev_b_button_state = False
-        self._is_logging = False
+        self._is_episode_running = False # [层级2] 标记当前是否处于一个 Episode 录制周期内
+        self.is_logging = False # [层级3] 标记当前是否正在记录数据
 
     @abstractmethod
     def _robot_setup(self):
@@ -87,30 +89,27 @@ class RobotTeleopController(BaseTeleopController, ABC):
         quat = tf.quaternion_from_matrix(T_world_link)
         return pos, quat
 
-    def _log_data(self):
-        """Logs the current state of the robot."""
-        if not self.enable_log_data:
-            return
-
-        timestamp = time.time() - self._start_time
-        data_entry = {"timestamp": timestamp}
-        data_entry.update(self._get_robot_state_for_logging())
-        self.data_logger.add_entry(data_entry)
-
     def _pre_ik_update(self):
         """Hook for subclasses to run logic before the main IK update."""
-        pass
+        """placo状态更新"""
+        self._update_robot_state()
+        self.placo_robot.update_kinematics()
+        if self.visualize_placo:
+            self._update_placo_viz()
 
+
+
+    #已被重写覆盖
     def _ik_thread(self, stop_event: threading.Event):
         """Dedicated thread for running the IK solver."""
         while not stop_event.is_set():
             start_time = time.time()
-            self._update_robot_state()
             self._update_gripper_target()
             self._pre_ik_update()
+            # if self.visualize_placo:
+            #     self._update_placo_viz()
             self._update_ik()
-            if self.visualize_placo:
-                self._update_placo_viz()
+            
             elapsed_time = time.time() - start_time
             sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
             if sleep_time > 0:
@@ -129,39 +128,51 @@ class RobotTeleopController(BaseTeleopController, ABC):
         self._shutdown_robot()
         print("Control loop has stopped.")
 
+
+    def _handle_logging_logic(self):
+            # 1. 获取信号
+            b_button_state = self.xr_client.get_button_state_by_name("B")
+            is_active = all(self.active.values()) 
+
+            # 2. B 按钮生命周期控制 (Start / Stop)
+            # 上升沿
+            if b_button_state and not self._prev_b_button_state:
+                # 防止重复触发
+                if self.data_logger.current_state == RecorderState.IDLE:
+                    self.data_logger.start_episode()
+
+            # 下降沿
+            elif not b_button_state and self._prev_b_button_state:
+                # 只要不是 IDLE 就可以保存
+                if self.data_logger.current_state != RecorderState.IDLE:
+                    self.data_logger.stop_episode()
+            
+            self._prev_b_button_state = b_button_state
+
+            # 3. 状态更新 (Pause / Record)
+            # 这行代码每帧都跑，负责在 PAUSED 和 RECORDING 之间反复横跳
+            # 如果是 IDLE 状态，这个函数内部会直接 return，所以很安全
+            self.data_logger.update_active_status(is_active)
+
+    def _log_data(self):
+        """Logs the current state of the robot."""
+        pass
+
     def _data_logging_thread(self, stop_event: threading.Event):
         """Dedicated thread for data logging."""
+        print("Data logging thread started (Waiting for B button to start episode)...")
         while not stop_event.is_set():
             start_time = time.time()
-            self._check_logging_button()
-            if self._is_logging:
-                self._log_data()
+            
+            # 执行核心逻辑
+            self._handle_logging_logic()
+
+            # 保持和控制频率一致，避免过度占用 CPU 或记录过多冗余数据
             elapsed_time = time.time() - start_time
-            sleep_time = (1.0 / self.log_freq) - elapsed_time
+            sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
             if sleep_time > 0:
                 time.sleep(sleep_time)
-        print("Data logging thread has stopped.")
 
-    def _check_logging_button(self):
-        """Checks for the 'B' button press to toggle data logging."""
-        b_button_state = self.xr_client.get_button_state_by_name("B")
-        right_axis_click = self.xr_client.get_button_state_by_name("right_axis_click")
-
-        if b_button_state and not self._prev_b_button_state:
-            self._is_logging = not self._is_logging
-            if self._is_logging:
-                print("--- Started data logging ---")
-            else:
-                print("--- Stopped data logging. Saving data... ---")
-                self.data_logger.save()
-                self.data_logger.reset()
-
-        if right_axis_click and self._is_logging:
-            print("--- Stopped data logging. Discarding data... ---")
-            self.data_logger.reset()
-            self._is_logging = False
-
-        self._prev_b_button_state = b_button_state
 
     def _should_keep_running(self) -> bool:
         """Returns True if the main loop should continue running."""

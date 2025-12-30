@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 from typing import Dict
 import rclpy
@@ -23,6 +24,15 @@ from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
 DEFAULT_ALLROBOT_URDF_PATH = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf")
 DEFAULT_SCALE_FACTOR = 1.15
 CONTROLLER_DEADZONE = 0.1
+
+class TerminalColor:
+    HEADER = '\033[95m' # 紫色
+    OKBLUE = '\033[94m' # 蓝色
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m' # 黄色
+    FAIL = '\033[91m'    # 红色
+    ENDC = '\033[0m'     # 重置颜色
+    BOLD = '\033[1m'     # 加粗
 
 
 def add_prefix_to_velocity_limits(prefix: str):
@@ -85,7 +95,6 @@ class AllRobotTeleopController(RobotTeleopController):
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
         log_dir: str = "logs/allrobot",
-        log_freq: float = 20,
         # 删除 enable_camera 和 camera_fps 参数
     ):
 
@@ -93,6 +102,7 @@ class AllRobotTeleopController(RobotTeleopController):
         # 我们需要一个 Executor 来管理所有 RM65Controller 节点的通信
         self.executor = None
         self._ros_spin_thread = None
+        self.is_connected = False
         
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -106,7 +116,6 @@ class AllRobotTeleopController(RobotTeleopController):
             self_collision_avoidance_enabled=self_collision_avoidance_enabled,
             enable_log_data=enable_log_data,
             log_dir=log_dir,
-            log_freq=log_freq,
 
         )
 
@@ -123,7 +132,15 @@ class AllRobotTeleopController(RobotTeleopController):
                 self.placo_robot.get_joint_offset(arm_joint_names[0]),
                 self.placo_robot.get_joint_offset(arm_joint_names[-1]) + 1,
             )
-        print(f"[DEBUG] {arm_name} 的关节切片索引范围: {self.placo_arm_joint_slice[arm_name]}")
+            print(f"[DEBUG] {arm_name} 的关节切片索引范围: {self.placo_arm_joint_slice[arm_name]}")
+            
+            ee_xyz, ee_quat = self._get_link_pose(config["link_name"])
+            self.ik_targets[arm_name] = {
+                "pos": np.array(ee_xyz),
+                "quat": np.array(ee_quat),
+            }
+        
+        
         
     def _robot_setup(self):
         
@@ -144,7 +161,7 @@ class AllRobotTeleopController(RobotTeleopController):
         # 2. 显式启动 ROS 线程 (Start)
         self._ros_spin_thread = threading.Thread(target=self._ros_spin_loop, daemon=True)
         self._ros_spin_thread.start()
-        print("ROS 通信线程已启动")
+        print(f"{TerminalColor.OKGREEN}成功：ROS 通信线程已启动{TerminalColor.ENDC}")
 
 
     def _ros_spin_loop(self):
@@ -152,8 +169,8 @@ class AllRobotTeleopController(RobotTeleopController):
             try:
                 self.executor.spin() # pyright: ignore[reportOptionalMemberAccess]
             except Exception as e:
-                print(f"ROS2 Executor 线程错误: {e}")
-            print("ROS2 Executor 线程已停止。")
+                print(f"{TerminalColor.FAIL}错误：ROS2 Executor 线程错误: {e}{TerminalColor.ENDC}")
+            print(f"ROS2 Executor 线程已停止。")
             
     def wait_for_hardware(self, timeout_sec=10.0):
             """供外部调用：阻塞等待直到收到硬件数据"""
@@ -163,43 +180,85 @@ class AllRobotTeleopController(RobotTeleopController):
             while not all(c.timestamp > 0 for c in self.arm_controllers.values()):
                 if time.time() - start_wait > timeout_sec:
                     # 这里可以选择抛出异常，或者返回 False 让外部决定怎么处理
-                    print(f"警告：{timeout_sec}秒内未收到机械臂数据！")
+                    print(f"{TerminalColor.WARNING}警告：{timeout_sec}秒内未收到机械臂数据！{TerminalColor.ENDC}")
                     return False
                 time.sleep(0.1) # 这里的 sleep 安全，因为 ROS spin 是在独立线程跑的
                 
-            print("所有机械臂已连接！")
+            print(f"{TerminalColor.OKGREEN}成功：所有机械臂已连接！{TerminalColor.ENDC}")
             return True
     
     def init_arm(self):
         """发送初始化位置"""
-        for arm_name, controller in self.arm_controllers.items():
-            controller.init_arm_cmd()
-
-    def run(self):
-
-        super().run()
+        self.is_connected = self.wait_for_hardware()
+        if self.is_connected:
+            print(f"{TerminalColor.OKGREEN}发送机械臂初始化角度Movej消息{TerminalColor.ENDC}")
+            for arm_name, controller in self.arm_controllers.items():
+                controller.init_arm_cmd()
+        else:
+            print(f"{TerminalColor.WARNING}警告：机械臂连接失败！ 不进行robot_state_update{TerminalColor.ENDC}")
+            print(f"进入placo仿真模式")
             
 
     def _update_robot_state(self):
         """Reads current joint states from both arm controllers and updates Placo."""
-        for arm_name, controller in self.arm_controllers.items():
-            self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
-
+        if self.is_connected:
+            for arm_name, controller in self.arm_controllers.items():
+                if controller.qpos is None:
+                    print(f"{TerminalColor.WARNING}警告：{arm_name} 机械臂未读取到state数据!{TerminalColor.ENDC}")
+                    time.sleep(0.5)
+                    continue
+                self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
         
 
+
+    def _ik_thread(self, stop_event: threading.Event):
+        """Dedicated thread for running the IK solver."""
+        while not stop_event.is_set():
+            start_time = time.time()
+            self._update_gripper_target()
+            self._pre_ik_update()
+            # if self.visualize_placo:
+            #     self._update_placo_viz()
+            self._update_ik() #IK执行完成后立即赋值，而非在_send_command中赋值
+            for arm_name, controller in self.arm_controllers.items():
+                if self.active[arm_name]:
+                    controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
+                       
+            elapsed_time = time.time() - start_time
+            sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        print("IK loop has stopped.")
+
+        
     def _send_command(self):
         """Sends the solved joint targets to both arm controllers."""
         for arm_name, controller in self.arm_controllers.items():
-            if self.active.get(arm_name, False):
-                controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
-
+            # if self.active.get(arm_name, False):
+            #     controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
+            controller.ik_target =self.ik_targets[arm_name]
+            
             controller.q_des_gripper = [
                 self.gripper_pos_target[arm_name][gripper_joint]
                 for gripper_joint in self.gripper_pos_target[arm_name].keys()
             ]
-
-            controller.publish_arm_control()
             controller.publish_gripper_control()
+            if self.active.get(arm_name, False):
+                controller.publish_arm_control()
+
+
+
+
+
+    def _should_keep_running(self) -> bool:
+        """Returns True if the main loop should continue running."""
+        return super()._should_keep_running() and rclpy.ok()
+
+    def _shutdown_robot(self):
+        """Performs graceful shutdown of the robot hardware."""
+        for arm_controller in self.arm_controllers.values():
+            arm_controller.stop()
+        print("Arm controllers stopped.")
 
 
     def _get_robot_state_for_logging(self) -> Dict:
@@ -212,17 +271,6 @@ class AllRobotTeleopController(RobotTeleopController):
             },
             
         }
-
-    def _should_keep_running(self) -> bool:
-        """Returns True if the main loop should continue running."""
-        return super()._should_keep_running() and rclpy.ok()
-
-    def _shutdown_robot(self):
-        """Performs graceful shutdown of the robot hardware."""
-        for arm_controller in self.arm_controllers.values():
-            arm_controller.stop()
-        print("Arm controllers stopped.")
-
     # def _pre_ik_update(self):
     #     """Updates the chassis and torso velocity commands based on joystick input."""
     #     self._update_joystick_velocity_command()

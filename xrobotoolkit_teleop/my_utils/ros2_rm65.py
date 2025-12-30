@@ -12,6 +12,7 @@ from std_msgs.msg import Float32, Header
 from rm_ros_interfaces.msg import Jointpos, Movej
 from my_interfaces.msg import HeaderFloat32
 import time
+from geometry_msgs.msg import PoseStamped
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
 RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, 0.0]))
@@ -20,12 +21,12 @@ LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
 
 # 通用关节速度限制（不带左右前缀，仅关节编号）
 ARM_VELOCITY_LIMITS = {
-    "joint_1": 0.8,
-    "joint_2": 0.8,
-    "joint_3": 0.8,
-    "joint_4": 1.2,
-    "joint_5": 1.2,
-    "joint_6": 1.6,
+    "joint_1": 2.0,
+    "joint_2": 2.0,
+    "joint_3": 3.0,
+    "joint_4": 3.14,
+    "joint_5": 3.14,
+    "joint_6": 3.14,
 }
 
 class RM65Controller(Node):
@@ -50,6 +51,7 @@ class RM65Controller(Node):
 
         self.pub = self.create_publisher(Jointpos, f"{arm_side}/rm_driver/movej_canfd_cmd", qos)
         self.pub_movej = self.create_publisher(Movej, f"{arm_side}/rm_driver/movej_cmd", qos)
+        self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target", qos)
         
         self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/{gripper_control_topic}", qos)
           
@@ -62,24 +64,31 @@ class RM65Controller(Node):
         
         self.arm_side = arm_side
 # 当前状态量q
-        self.qpos = [0.0] * 6
+        self.qpos = None
         # self.qvel = [0.0] * 6
         # self.qpos_gripper = 0.0
         self.timestamp = 0.0
 
 #目标q
         self.q_des = None
-
+        
+        self.ik_target = {"pos":None, "quat":None}
+        self.ik_target_msg = PoseStamped()
+        self.ik_target_msg.header=Header()
+        self.ik_target_msg.header.frame_id = "ee_link"
+        
         self.arm_ctrl_msg = Jointpos()
+        self.arm_ctrl_msg.header = Header()
         self.arm_ctrl_msg.follow= follow_mode
         self.arm_ctrl_msg.dof=6
 
         self.q_des_gripper = [0.0] #trigger 0~1
 
         self.gripper_ctrl_msg = HeaderFloat32()
+        self.gripper_ctrl_msg.header=Header()
         
         # Create a timer to run the control loop
-        # self.timer = self.create_timer(1.0 / rate_hz, self.control_loop)
+        # self.timer = self.create_timer(1.0 / 20, self.control_loop)
 
     def init_arm_cmd(self):
         """发送初始化位置"""
@@ -125,15 +134,23 @@ class RM65Controller(Node):
         """
         Publishes arm control messages.
         """
-        if self.q_des is None:
+        if self.q_des is None or self.ik_target["pos"] is None or self.ik_target["quat"] is None:
             return
 
-        self.arm_ctrl_msg.header = Header()
-        self.arm_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
+        self.ik_target_msg.header.stamp=self.arm_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
         self.arm_ctrl_msg.header.frame_id = "rm_joint"
         self.arm_ctrl_msg.joint=self.q_des
         
+        self.ik_target_msg.pose.position.x=self.ik_target["pos"][0]
+        self.ik_target_msg.pose.position.y=self.ik_target["pos"][1]
+        self.ik_target_msg.pose.position.z=self.ik_target["pos"][2]
+        self.ik_target_msg.pose.orientation.x=self.ik_target["quat"][0]
+        self.ik_target_msg.pose.orientation.y=self.ik_target["quat"][1]
+        self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][2]
+        self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][3]
+        
         self.pub.publish(self.arm_ctrl_msg)
+        self.pub_ik_target.publish(self.ik_target_msg)
 
     def publish_gripper_control(self):
         """
@@ -141,19 +158,18 @@ class RM65Controller(Node):
         """
         if self.q_des_gripper is None:
             return
-        self.gripper_ctrl_msg.header = Header()
         self.gripper_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
         self.gripper_ctrl_msg.header.frame_id = "gripper_link"
         self.gripper_ctrl_msg.data = self.q_des_gripper[0]
 
         self.gripper_pub.publish(self.gripper_ctrl_msg)
 
-    # def control_loop(self):
-    #     """
-    #     Replaces the main loop. Called by timer.
-    #     """
-    #     self.publish_arm_control()
-    #     self.publish_gripper_control()
+    def control_loop(self):
+        """
+        Replaces the main loop. Called by timer.
+        """
+        self.publish_arm_control()
+        self.publish_gripper_control()
         
     def stop(self):
         """

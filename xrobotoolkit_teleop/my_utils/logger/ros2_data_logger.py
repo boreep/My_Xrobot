@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Dict, Any, List, Optional
 import sys
 
-# 自动定位项目根目录 (保留你的原始逻辑)
+# 自动定位项目根目录
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..','..'))
 from xrobotoolkit_teleop.utils.path_utils import DATASET_PATH 
 
@@ -28,7 +28,7 @@ class RecorderState(Enum):
     RECORDING = 1   
 
 # ==========================================
-#           积木块：单臂录制器 (保持不变)
+#           积木块：单臂数据接收器
 # ==========================================
 class ArmRecorder:
     def __init__(self, node: Node, arm_side: str, topic_mapping: Dict[str, str], handlers: Dict[str, Dict]):
@@ -40,8 +40,8 @@ class ArmRecorder:
         self.handlers = handlers
         self._lock = threading.Lock()
         self._latest_frame = None 
-        # === [新增 1] 初始化版本计数器 ===
-        self.frame_version = 0
+        
+        # 注意：这里移除了 frame_version，不再维护版本号
 
         for key, topic_suffix in topic_mapping.items():
             if key not in handlers: continue
@@ -58,10 +58,14 @@ class ArmRecorder:
             self.keys.append(key)
             node.get_logger().info(f"[{arm_side}] Listening: {full_topic}")
 
+        # 使用 ApproximateTimeSynchronizer 确保同一只手臂内的数据对齐
         self.sync = message_filters.ApproximateTimeSynchronizer(self.subs, queue_size=50, slop=0.05)
         self.sync.registerCallback(self.sync_callback)
 
     def sync_callback(self, *msgs):
+        """
+        后台接收回调，只负责更新 _latest_frame
+        """
         frame_data = {}
         now = self.node.get_clock().now().nanoseconds / 1e9
         try:
@@ -76,17 +80,16 @@ class ArmRecorder:
                         frame_data["timestamp"] = now
             with self._lock:
                 self._latest_frame = frame_data
-                # === [新增 2] 每次收到新数据，版本号 +1 ===
-                self.frame_version += 1
+                # 移除了 version += 1
         except Exception as e:
             self.node.get_logger().error(f"[{self.arm_side}] Parse Error: {e}")
 
-# === [修改] 返回数据时，同时也返回版本号 ===
     def sample_current_frame(self):
+        """只返回数据，不再返回版本号"""
         with self._lock:
             if self._latest_frame is None: 
-                return None, -1  # 未初始化时，版本号为 -1
-            return self._latest_frame.copy(), self.frame_version
+                return None
+            return self._latest_frame.copy()
 
     def record_frame(self, data):
         self.buffer.append(data)
@@ -108,9 +111,7 @@ class DualArmDataLogger(Node):
         super().__init__('dual_arm_logger')
         
         self.config_cache = config
-        # === [新增 3] 记录上一次保存的版本号 ===
-        self.last_ver_left = -1
-        self.last_ver_right = -1
+        # 移除了 last_ver_left/right 变量
         
         # 配置参数读取
         base_dir = config.get('base_dir', 'robot_dataset')
@@ -148,7 +149,7 @@ class DualArmDataLogger(Node):
         self.handlers = {}
         self._register_handlers()
         
-        # 实例化左右臂 (topic_logic_map 里的 {arm_side} 会被自动替换)
+        # 实例化左右臂
         self.left_arm = ArmRecorder(self, "left_arm", topic_logic_map, self.handlers)
         self.right_arm = ArmRecorder(self, "right_arm", topic_logic_map, self.handlers)
 
@@ -170,46 +171,29 @@ class DualArmDataLogger(Node):
         return np.array([p.x, p.y, p.z, q.x, q.y, q.z, q.w], dtype=np.float32)
 
     def timer_callback(self):
-        # 1. 基础状态检查
+        # 1. 第一级门控：录制状态与激活信号
         if self.current_state != RecorderState.RECORDING or not self.is_active:
             return
 
-        # 2. 获取数据和版本号
-        left_data, left_ver = self.left_arm.sample_current_frame()
-        right_data, right_ver = self.right_arm.sample_current_frame()
+        # 2. 获取数据 (Zero-Order Hold)
+        left_data = self.left_arm.sample_current_frame()
+        right_data = self.right_arm.sample_current_frame()
 
-        # === [逻辑 A] 初始启动门槛：原本的都为 None 则不开始 ===
+        # 3. 初始启动门槛：等待两臂至少初始化完成一次
         if left_data is None or right_data is None:
-            self.get_logger().warn("Waiting for initial data...", throttle_duration_sec=1)
+            self.get_logger().warn("Waiting for initial data from BOTH arms...", throttle_duration_sec=1)
             return
 
-        # === [逻辑 B] 检查是否有更新 ===
-        # 只要当前的 ID 比上一次保存的 ID 大，就说明有新数据
-        has_new_left = left_ver > self.last_ver_left
-        has_new_right = right_ver > self.last_ver_right
-
-        # === [逻辑 C] 核心判断 ===
-        # 只有当两边都没有更新时，才暂停记录
-        if not has_new_left and not has_new_right:
-            return  # 直接跳过，不写入 Buffer
-
-        # === [执行记录] ===
-        # 只要走到这里，说明至少有一只手更新了。
-        # 没更新的那只手，会复用 sample_current_frame 返回的旧数据 (Zero-Order Hold)
+        # 4. 强制写入 (Zero-Order Hold)
+        # 只要 Active，无论数据是否更新，都按定时器频率写入
+        # 这保证了双臂数据长度严格一致，且时间轴连续
         self.left_arm.record_frame(left_data)
         self.right_arm.record_frame(right_data)
-
-        # 更新记录下来的版本号
-        self.last_ver_left = left_ver
-        self.last_ver_right = right_ver
 
     def start_episode(self):
         if self.current_state == RecorderState.IDLE:
             self.left_arm.clear()
             self.right_arm.clear()
-            # 重置版本记忆，确保下一轮录制从头开始
-            self.last_ver_left = -1
-            self.last_ver_right = -1
             self.current_state = RecorderState.RECORDING
             self.get_logger().info(f">>> START RECORDING (Ep {self.episode_count}) <<<")
 
@@ -250,8 +234,7 @@ class DualArmDataLogger(Node):
             
             self.get_logger().info(f"Saved: {filename_only}")
             
-            # 2. 统计信息 (以左臂的时间为基准，通常两者帧数由 Timer 保证一致)
-            # 但为了安全，取最小长度
+            # 2. 统计信息
             frame_count = min(len(self.left_arm.buffer), len(self.right_arm.buffer))
             start_t = self.left_arm.buffer[0]['timestamp']
             end_t = self.left_arm.buffer[-1]['timestamp']
@@ -270,8 +253,7 @@ class DualArmDataLogger(Node):
             total_frames = sum(e['frame_count'] for e in self.recorded_episodes_info)
             total_duration = sum(e['duration_sec'] for e in self.recorded_episodes_info)
 
-            # 4. 分析双臂结构 (分别分析)
-            # 这里我们传入 total_frames，让 Metadata 显示的总 Shape 是 [Total, ...]
+            # 4. 分析双臂结构
             structure_left = self._analyze_structure(self.left_arm.buffer, self.left_arm.keys, total_frames)
             structure_right = self._analyze_structure(self.right_arm.buffer, self.right_arm.keys, total_frames)
             
@@ -289,7 +271,6 @@ class DualArmDataLogger(Node):
             traceback.print_exc()
 
     def _write_group(self, group, buffer, keys, arm_name):
-        # 确保数据对齐，虽然理论上一样长，切片保证安全
         n_frames = len(buffer)
         for key in keys:
             data = np.stack([frame[key] for frame in buffer])
@@ -353,7 +334,7 @@ class DualArmDataLogger(Node):
                 "sampling_rate": self.target_rate,
                 "topics": self.config_cache.get('topics')
             },
-            "dataset_structure": structure_info, # 这里包含了 left 和 right 的字典
+            "dataset_structure": structure_info, 
             "episodes": self.recorded_episodes_info
         }
         with open(self.metadata_path, 'w') as f:
@@ -364,7 +345,7 @@ class DualArmDataLogger(Node):
 # ==========================================
 #           Config 加载与主函数
 # ==========================================
-def load_config(config_path="config/dual_arm_config.yaml.yaml"):
+def load_config(config_path="config/default_dataset_config.yaml"):
     full_path = os.path.join(DATASET_PATH, config_path)
     if not os.path.exists(full_path):
         print(f"[Error] Config file not found: {full_path}")
@@ -375,9 +356,8 @@ def load_config(config_path="config/dual_arm_config.yaml.yaml"):
 def main(args=None):
     rclpy.init(args=args)
 
-    # 1. 加载配置 (确保你的 yaml 文件里 topics 用了 {arm_side} 占位符)
-    # 例如: "joint_cmd": "{arm_side}/rm_driver/movej_canfd_cmd"
-    config = load_config("config/dual_arm_config.yaml")
+    # 1. 加载配置
+    config = load_config()
 
     # 2. 启动双臂节点
     logger_node = DualArmDataLogger(config)

@@ -28,7 +28,7 @@ class RecorderState(Enum):
     RECORDING = 1   
 
 # ==========================================
-#           积木块：单臂录制器 (核心逻辑)
+#           积木块：单臂数据接收器
 # ==========================================
 class ArmRecorder:
     def __init__(self, node: Node, arm_side: str, topic_mapping: Dict[str, str], handlers: Dict[str, Dict]):
@@ -40,7 +40,7 @@ class ArmRecorder:
         self.handlers = handlers
         self._lock = threading.Lock()
         self._latest_frame = None 
-        # === [新增 1] 初始化版本计数器 ===
+        # 内部版本计数器 (仅用于调试观察，不再用于控制逻辑)
         self.frame_version = 0
 
         for key, topic_suffix in topic_mapping.items():
@@ -58,11 +58,15 @@ class ArmRecorder:
             self.keys.append(key)
             node.get_logger().info(f"[{arm_side}] Listening: {full_topic}")
 
-        # 使用 ApproximateTimeSynchronizer 确保同一只手臂的数据对齐
+        # 使用 ApproximateTimeSynchronizer 确保同一时刻的 Joint, Pose, Gripper 对齐
         self.sync = message_filters.ApproximateTimeSynchronizer(self.subs, queue_size=50, slop=0.05)
         self.sync.registerCallback(self.sync_callback)
 
     def sync_callback(self, *msgs):
+        """
+        当所有订阅的话题在时间窗口内对齐时触发。
+        这会在后台独立运行，不断更新 _latest_frame。
+        """
         frame_data = {}
         now = self.node.get_clock().now().nanoseconds / 1e9
         try:
@@ -70,7 +74,8 @@ class ArmRecorder:
                 key = self.keys[i]
                 parser = self.handlers[key]['parser']
                 frame_data[key] = parser(msg)
-                # 使用第一个消息的时间戳作为该帧时间
+                
+                # 使用第一个消息的时间戳作为该帧的物理时间戳
                 if i == 0:
                     if hasattr(msg, 'header'):
                         frame_data["timestamp"] = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -79,22 +84,21 @@ class ArmRecorder:
             
             with self._lock:
                 self._latest_frame = frame_data
-                # === [新增 2] 每次成功同步一帧新数据，版本号 +1 ===
                 self.frame_version += 1
         except Exception as e:
             self.node.get_logger().error(f"[{self.arm_side}] Parse Error: {e}")
 
-    # === [修改] 返回数据时，同时也返回版本号 ===
     def sample_current_frame(self):
+        """返回当前的最新帧（如果传感器卡顿，这可能是一帧旧数据）"""
         with self._lock:
             if self._latest_frame is None: 
-                return None, -1  # 未初始化时，版本号为 -1
-            return self._latest_frame.copy(), self.frame_version
+                return None
+            return self._latest_frame.copy()
 
     def record_frame(self, data):
         self.buffer.append(data)
         if len(self.buffer) % 50 == 0:
-            self.node.get_logger().info(f"[{self.arm_side}] Buffer: {len(self.buffer)}")
+            self.node.get_logger().info(f"[{self.arm_side}] Buffer size: {len(self.buffer)}")
 
     def clear(self):
         self.buffer = []
@@ -112,20 +116,17 @@ class SingleArmDataLogger(Node):
         
         self.config_cache = config
         
-        # === [新增 3] 记录上一次保存的版本号 ===
-        self.last_ver = -1
-        
         # 配置参数读取
         base_dir = config.get('base_dir', 'robot_dataset')
         task_name = config.get('task_name', 'default_task')
         target_rate = config.get('sampling_rate', 20)
         topic_logic_map = config.get('topics', {})
-        # 默认使用左臂，也可在 config 中指定 arm_side
+        # 默认使用配置中的 arm_side，如未配置默认为 right_arm
         self.target_arm = config.get('arm_side', 'right_arm') 
         self.target_rate = target_rate
 
         self.current_state = RecorderState.IDLE
-        self.is_active = False
+        self.is_active = False # 外部控制开关
         self.episode_count = 0 
         
         # === 1. 构建目录结构 ===
@@ -153,7 +154,7 @@ class SingleArmDataLogger(Node):
         self.handlers = {}
         self._register_handlers()
         
-        # 实例化单臂
+        # 实例化单臂监听器
         self.arm_recorder = ArmRecorder(self, self.target_arm, topic_logic_map, self.handlers)
 
         # === 5. 启动核心 Timer ===
@@ -174,33 +175,31 @@ class SingleArmDataLogger(Node):
         return np.array([p.x, p.y, p.z, q.x, q.y, q.z, q.w], dtype=np.float32)
 
     def timer_callback(self):
-        # 1. 基础状态检查
-        if self.current_state != RecorderState.RECORDING or not self.is_active:
+        # 1. 全局状态检查
+        if self.current_state != RecorderState.RECORDING:
             return
 
-        # 2. 获取数据和版本号
-        data, current_ver = self.arm_recorder.sample_current_frame()
+        # 2. 激活状态检查 (Pause控制)
+        # 只有当外部控制器（如VR手柄死区键）激活时才记录
+        if not self.is_active:
+            return
 
-        # === [逻辑 A] 初始启动门槛 ===
+        # 3. 获取数据 (Zero-Order Hold)
+        data = self.arm_recorder.sample_current_frame()
+
+        # 4. 初始数据检查
         if data is None:
             self.get_logger().warn("Waiting for initial data...", throttle_duration_sec=1)
             return
 
-        # === [逻辑 B] 智能去重/自动暂停逻辑 ===
-        # 只有当 current_ver (当前版本) 大于 last_ver (上次保存的版本) 时，才说明有新数据
-        if current_ver > self.last_ver:
-            self.arm_recorder.record_frame(data)
-            self.last_ver = current_ver # 更新已保存的版本号
-        else:
-            # 数据未更新，跳过写入 (Pause)
-            # 可以在这里打印 debug 信息，但建议保持静默以免刷屏
-            pass 
+        # 5. 执行写入
+        # 即使 data 与上一次相同（传感器未更新），只要 Active，也照常写入，
+        # 保证时间轴的连续性和采样频率的稳定性。
+        self.arm_recorder.record_frame(data)
 
     def start_episode(self):
         if self.current_state == RecorderState.IDLE:
             self.arm_recorder.clear()
-            # 重置版本记忆，确保下一轮录制从头开始
-            self.last_ver = -1
             self.current_state = RecorderState.RECORDING
             self.get_logger().info(f">>> START RECORDING (Ep {self.episode_count}) <<<")
 
@@ -213,8 +212,9 @@ class SingleArmDataLogger(Node):
 
     def update_active_status(self, is_active: bool):
         self.is_active = is_active
-        status_str = "ACTIVATED" if is_active else "DEACTIVATED"
-        self.get_logger().info(f"[System] {status_str}")
+        # 可选：打印状态切换日志，防止刷屏可注释掉
+        # status_str = "ACTIVATED" if is_active else "DEACTIVATED"
+        # self.get_logger().info(f"[System] {status_str}")
 
     # ==========================================
     #      核心：单臂 HDF5 保存与元数据更新
@@ -310,7 +310,7 @@ class SingleArmDataLogger(Node):
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "task_name": self.config_cache.get('task_name'),
                 "node_name": self.get_name(),
-                "mode": "SingleArm", # 标记为单臂模式
+                "mode": "SingleArm", 
                 "sampling_rate": self.target_rate,
                 "topics": self.config_cache.get('topics')
             },
@@ -332,7 +332,7 @@ class SingleArmDataLogger(Node):
                 "sampling_rate": self.target_rate,
                 "topics": self.config_cache.get('topics')
             },
-            "dataset_structure": structure_info, # 单臂模式下，直接是扁平字典
+            "dataset_structure": structure_info,
             "episodes": self.recorded_episodes_info
         }
         with open(self.metadata_path, 'w') as f:
@@ -343,7 +343,7 @@ class SingleArmDataLogger(Node):
 # ==========================================
 #           Config 加载与主函数
 # ==========================================
-def load_config(config_path="config/recorder_config.yaml"):
+def load_config(config_path="config/default_dataset_config.yaml"):
     full_path = os.path.join(DATASET_PATH, config_path)
     if not os.path.exists(full_path):
         print(f"[Error] Config file not found: {full_path}")
@@ -355,7 +355,8 @@ def main(args=None):
     rclpy.init(args=args)
 
     # 1. 加载配置
-    # 确保您的 config yaml 文件里 topics 用了 {arm_side} 占位符
+    # 注意：此配置文件中应包含 topics, task_name, base_dir 等字段
+    # 并且 topics 中的 value 可以使用 {arm_side} 占位符
     config = load_config("config/default_dataset_config.yaml")
 
     # 2. 启动单臂节点
@@ -373,7 +374,7 @@ def main(args=None):
     print(f"\n=== 单臂 ({logger_node.target_arm}) 录制控制台 ===")
     print(f"任务: {config.get('task_name')}")
     print(" [B] 开始/停止录制")
-    print(" [A] 切换 Active 状态")
+    print(" [A] 切换 Active 状态 (模拟手柄死区键)")
     print(" [Q] 退出")
 
     sim_b_pressed = False 

@@ -38,15 +38,9 @@ def main(
         visualize_placo=True,
         control_rate_hz=50,
         self_collision_avoidance_enabled=True,
+        enable_log_data=True,
     )
-    # 可选的关节约束任务（当前被注释掉）
-    joints_task = controller.solver.add_joints_task()
-    # joints_task.set_joints({joint: 0.0 for joint in controller.placo_robot.joint_names()})
-    joints_task.configure("joints_regularization", "soft", 1e-4)
-    
-    manipulability = controller.solver.add_manipulability_task("effector", "both", 1.0)
-    manipulability.configure("manipulability", "soft", 1e-3)
-    
+
     kinetic_energy_task = controller.solver.add_kinetic_energy_regularization_task(1e-6)
     
 

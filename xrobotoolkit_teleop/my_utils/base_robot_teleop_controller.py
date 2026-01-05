@@ -1,16 +1,18 @@
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Optional
 
 import meshcat.transformations as tf
 import numpy as np
 
 from xrobotoolkit_teleop.my_utils.base_controller import BaseController
-from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import (
-    RecorderState,
-    DualArmDataLogger
-)
+from xrobotoolkit_teleop.utils.terminalcolor import TerminalColor
+
+
+
+# 假设文件路径如下，请根据实际情况调整 import 路径
+from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import RecorderState
 
 class RobotTeleopController(BaseController, ABC):
     """
@@ -30,7 +32,8 @@ class RobotTeleopController(BaseController, ABC):
         control_rate_hz: int,
         self_collision_avoidance_enabled: bool,
         enable_log_data: bool,
-        log_dir: str,
+        logger_config_path: str = "config/default_dataset_config.yaml",
+        is_log_dual_arm: bool = False
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,
@@ -42,7 +45,6 @@ class RobotTeleopController(BaseController, ABC):
             dt=1.0 / control_rate_hz,
             self_collision_avoidance_enabled=self_collision_avoidance_enabled,
             enable_log_data=enable_log_data,
-            log_dir=log_dir,
         )
 
         self._start_time = 0
@@ -52,10 +54,16 @@ class RobotTeleopController(BaseController, ABC):
         if self.visualize_placo:
             self._init_placo_viz()
 
-        #数据集记录相关
+        # === 数据集记录相关初始化 ===
         self._prev_b_button_state = False
-        self._is_episode_running = False # [层级2] 标记当前是否处于一个 Episode 录制周期内
-        self.is_logging = False # [层级3] 标记当前是否正在记录数据
+        self.data_logger = None
+        self.logger_spin_thread = None
+        
+    @abstractmethod
+    def _init_logging_node(self):
+        """Initializes the ROS node for logging robot states."""
+        pass
+
 
     @abstractmethod
     def _robot_setup(self):
@@ -130,40 +138,21 @@ class RobotTeleopController(BaseController, ABC):
 
 
 # 假设这是在你的 VR 控制 Loop 中
+    @abstractmethod
     def _handle_logging_logic(self):
         # 1. 获取信号
-        b_button_state = self.xr_client.get_button_state_by_name("B")
-        
-        # 这里的 is_active 可能是死区开关或者手柄检测状态
-        # 如果 is_active 为 False，Logger 内部会自动丢弃接收到的数据，实现"暂停"效果
-        current_is_active = all(self.active.values()) 
-        
-        # 实时同步 Active 状态给 Logger
-        self.data_logger.update_active_status(current_is_active)
-
-        # 2. B 按钮生命周期控制 (Start / Stop)
-        # 上升沿：开始新的 Episode
-        if b_button_state and not self._prev_b_button_state:
-            if self.data_logger.current_state == RecorderState.IDLE:
-                self.data_logger.start_episode()
-
-        # 下降沿：结束并保存 Episode
-        elif not b_button_state and self._prev_b_button_state:
-            if self.data_logger.current_state != RecorderState.IDLE:
-                self.data_logger.stop_episode()
-        
-        self._prev_b_button_state = b_button_state
+        pass
 
     def _data_logging_thread(self, stop_event: threading.Event):
         """Dedicated thread for data logging."""
-        print("Data logging thread started (Waiting for B button to start episode)...")
+        print(f"{TerminalColor.WARNING}Data logging thread started (Waiting for B button to start episode)...{TerminalColor.ENDC}")
         while not stop_event.is_set():
             start_time = time.time()
             
             # 执行核心逻辑
             self._handle_logging_logic()
 
-            # 保持和控制频率一致，避免过度占用 CPU 或记录过多冗余数据
+            # 这里复用 control_rate_hz
             elapsed_time = time.time() - start_time
             sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
             if sleep_time > 0:

@@ -123,7 +123,7 @@ class BaseController(abc.ABC):
     def _placo_setup(self):
         """设置Placo逆运动学求解器"""
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
-        print("Joint names in the Placo model:")
+        print("[placo_setup] Joint names in the Placo model:")
         for joint_name in self.placo_robot.model.names:
             print(f"  {joint_name}")
 
@@ -149,9 +149,9 @@ class BaseController(abc.ABC):
             avoid_self_collisions.configure("avoid_self_collisions", "hard")
             avoid_self_collisions.self_collisions_margin = SELF_COLLISION_MARGIN  # [m]
             avoid_self_collisions.self_collisions_trigger = SELF_COLLISION_TRIGGER  # [m]
-            print("Self-collision avoidance enabled in Placo solver.")
+            print("[placo_setup] Self-collision avoidance enabled in Placo solver.")
         else:
-            print("Self-collision avoidance is NOT enabled.")
+            print("[placo_setup] Self-collision avoidance is NOT enabled.")
             
         # 为每个操作器设置末端执行器任务
         for name, config in self.manipulator_config.items():
@@ -164,14 +164,14 @@ class BaseController(abc.ABC):
             if control_mode == "position":
                 # 位置控制模式
                 self.effector_task[name] = self.solver.add_position_task(config["link_name"], ee_xyz)
-                print(f"Created position task for {name} -> {config['link_name']}")
+                print(f"[placo_setup] Created position task for {name} -> {config['link_name']}")
                 self.effector_task[name].configure(name, "soft", 1.0)
             else:
                 # 全位姿控制模式（默认）
                 ee_target = tf.quaternion_matrix(ee_quat)
                 ee_target[:3, 3] = ee_xyz
                 self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
-                print(f"Created pose task for {name} -> {config['link_name']}")
+                print(f"[placo_setup] Created pose task for {name} -> {config['link_name']}")
                 self.effector_task[name].configure(name, "soft", 1.0, 0.1)
             
 
@@ -184,11 +184,11 @@ class BaseController(abc.ABC):
                     if joint_name in self.placo_robot.model.names:
                         self.placo_robot.set_velocity_limit(joint_name, limit_val)
                     else:
-                        print(f"警告: 关节 {joint_name} 未在 placo 模型中找到，无法设置速度限制")
+                        print(f"[placo_setup] 警告: 关节 {joint_name} 未在 placo 模型中找到，无法设置速度限制")
                 
                 # 2. 显式开启速度限制功能
                 self.solver.enable_velocity_limits(True)
-                print(f"Velocity limits enabled for joints in {name}.")
+                print(f"[placo_setup] Velocity limits enabled for joints in {name}.")
                 
     
             # 设置运动追踪器任务（如果配置了）
@@ -199,7 +199,7 @@ class BaseController(abc.ABC):
                 tracker_task_name = f"{name}_tracker"
                 self.motion_tracker_task[name] = self.solver.add_position_task(link_target, target_xyz)
                 self.motion_tracker_task[name].configure(tracker_task_name, "soft", 1.0)
-                print(f"Motion tracker position task created for {name} -> {link_target}")
+                print(f"[placo_setup] Motion tracker position task created for {name} -> {link_target}")
 
         self.placo_robot.update_kinematics()
 
@@ -253,7 +253,7 @@ class BaseController(abc.ABC):
         try:
             self.solver.solve(True)
         except RuntimeError as e:
-            print(f"IK solver failed: {e}")
+            print(f"[update_ik] IK solver failed: {e}")
 
     def _update_motion_tracker_tasks(self):
         """处理运动追踪器数据并更新相应的Placo任务"""

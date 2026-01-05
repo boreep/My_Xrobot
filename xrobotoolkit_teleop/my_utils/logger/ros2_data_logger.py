@@ -40,6 +40,8 @@ class ArmRecorder:
         self.handlers = handlers
         self._lock = threading.Lock()
         self._latest_frame = None 
+        # === [新增 1] 初始化版本计数器 ===
+        self.frame_version = 0
 
         for key, topic_suffix in topic_mapping.items():
             if key not in handlers: continue
@@ -74,13 +76,17 @@ class ArmRecorder:
                         frame_data["timestamp"] = now
             with self._lock:
                 self._latest_frame = frame_data
+                # === [新增 2] 每次收到新数据，版本号 +1 ===
+                self.frame_version += 1
         except Exception as e:
             self.node.get_logger().error(f"[{self.arm_side}] Parse Error: {e}")
 
-    def sample_current_frame(self) -> Optional[Dict]:
+# === [修改] 返回数据时，同时也返回版本号 ===
+    def sample_current_frame(self):
         with self._lock:
-            if self._latest_frame is None: return None
-            return self._latest_frame.copy()
+            if self._latest_frame is None: 
+                return None, -1  # 未初始化时，版本号为 -1
+            return self._latest_frame.copy(), self.frame_version
 
     def record_frame(self, data):
         self.buffer.append(data)
@@ -102,6 +108,9 @@ class DualArmDataLogger(Node):
         super().__init__('dual_arm_logger')
         
         self.config_cache = config
+        # === [新增 3] 记录上一次保存的版本号 ===
+        self.last_ver_left = -1
+        self.last_ver_right = -1
         
         # 配置参数读取
         base_dir = config.get('base_dir', 'robot_dataset')
@@ -161,28 +170,46 @@ class DualArmDataLogger(Node):
         return np.array([p.x, p.y, p.z, q.x, q.y, q.z, q.w], dtype=np.float32)
 
     def timer_callback(self):
-        """
-        核心循环：以固定频率从两个 Recorder 拉取数据
-        """
+        # 1. 基础状态检查
         if self.current_state != RecorderState.RECORDING or not self.is_active:
             return
 
-        # 分别获取最新帧 (Zero-Order Hold 或 None)
-        left_data = self.left_arm.sample_current_frame()
-        right_data = self.right_arm.sample_current_frame()
+        # 2. 获取数据和版本号
+        left_data, left_ver = self.left_arm.sample_current_frame()
+        right_data, right_ver = self.right_arm.sample_current_frame()
 
-        # 这里的策略是：只有当两只手都有数据时才记录（保证对齐）
-        # 实际情况中，ArmRecorder 启动后只要收到过一次消息，buffer 就不会是 None
-        if left_data is not None and right_data is not None:
-            self.left_arm.record_frame(left_data)
-            self.right_arm.record_frame(right_data)
-        else:
-            self.get_logger().warn("Waiting for initial data from both arms...", throttle_duration_sec=1)
+        # === [逻辑 A] 初始启动门槛：原本的都为 None 则不开始 ===
+        if left_data is None or right_data is None:
+            self.get_logger().warn("Waiting for initial data...", throttle_duration_sec=1)
+            return
+
+        # === [逻辑 B] 检查是否有更新 ===
+        # 只要当前的 ID 比上一次保存的 ID 大，就说明有新数据
+        has_new_left = left_ver > self.last_ver_left
+        has_new_right = right_ver > self.last_ver_right
+
+        # === [逻辑 C] 核心判断 ===
+        # 只有当两边都没有更新时，才暂停记录
+        if not has_new_left and not has_new_right:
+            return  # 直接跳过，不写入 Buffer
+
+        # === [执行记录] ===
+        # 只要走到这里，说明至少有一只手更新了。
+        # 没更新的那只手，会复用 sample_current_frame 返回的旧数据 (Zero-Order Hold)
+        self.left_arm.record_frame(left_data)
+        self.right_arm.record_frame(right_data)
+
+        # 更新记录下来的版本号
+        self.last_ver_left = left_ver
+        self.last_ver_right = right_ver
 
     def start_episode(self):
         if self.current_state == RecorderState.IDLE:
             self.left_arm.clear()
             self.right_arm.clear()
+            # 重置版本记忆，确保下一轮录制从头开始
+            self.last_ver_left = -1
+            self.last_ver_right = -1
             self.current_state = RecorderState.RECORDING
             self.get_logger().info(f">>> START RECORDING (Ep {self.episode_count}) <<<")
 

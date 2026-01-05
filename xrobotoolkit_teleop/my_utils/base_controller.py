@@ -40,7 +40,6 @@ class BaseController(abc.ABC):
         dt: float,
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
-        log_dir: str = "logs",
 
     ):
         """初始化遥操作控制器基类"""
@@ -56,9 +55,7 @@ class BaseController(abc.ABC):
         self.enable_self_collision_avoidance = self_collision_avoidance_enabled
 
         self.enable_log_data = enable_log_data
-        self.log_dir = log_dir
-        if enable_log_data:
-            self.data_logger = DualArmDataLogger(log_root_dir=log_dir)
+
 
         # 初始化位姿参考变量
         self.ref_ee_xyz: Dict[str, Any] = {name: None for name in manipulator_config.keys()}

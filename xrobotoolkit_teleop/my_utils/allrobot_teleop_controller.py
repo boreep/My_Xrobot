@@ -331,8 +331,9 @@ class AllRobotTeleopController(RobotTeleopController):
         executor.add_node(self.data_logger)
 
         try:
-            while not stop_event.is_set() and rclpy.ok():
-                executor.spin_once(timeout_sec=0.1)
+            # 2. 直接使用阻塞式 spin，它会自动利用多线程处理回调
+            # 这种方式比 spin_once 循环效率高得多，且对 Timer 的响应最准
+            executor.spin()
         except Exception as e:
             print(f"[Logger] {TerminalColor.WARNING}Logger spin error: {e}{TerminalColor.ENDC}")
         finally:

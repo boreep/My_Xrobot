@@ -32,6 +32,35 @@ def main():
         
         total_frames = len(cam_timestamps)# type: ignore
         print(f"✅ 加载完成，共 {total_frames} 帧。")
+# ==========================================
+        # === A+. [新增] 数据集频率分析逻辑 ===
+        # ==========================================
+        if total_frames > 1:
+            # 计算相邻时间戳的差值 (dt)
+            intervals = np.diff(cam_timestamps) # type: ignore
+            
+            # 统计指标
+            avg_dt = np.mean(intervals)       # 平均间隔 (秒)
+            std_dt = np.std(intervals)        # 标准差 (秒，反映抖动程度)
+            max_dt = np.max(intervals)        # 最大间隔
+            min_dt = np.min(intervals)        # 最小间隔
+            
+            # 计算频率 (Hz)
+            freq = 1.0 / avg_dt if avg_dt > 0 else 0
+            
+            print("-" * 40)
+            print(f"📊 数据集时间轴分析报告:")
+            print(f"  - 总录制时长 : {cam_timestamps[-1] - cam_timestamps[0]:.2f} 秒") # type: ignore
+            print(f"  - 平均频率   : {freq:.2f} Hz")
+            print(f"  - 平均间隔   : {avg_dt*1000:.2f} ms ({avg_dt:.6f} s)")
+            print(f"  - 间隔抖动(std): {std_dt*1000:.2f} ms")
+            print(f"  - 最大间隔   : {max_dt:.6f} s")
+            print(f"  - 最小间隔   : {min_dt:.6f} s")
+            print("-" * 40)
+        else:
+            print("⚠️ 数据帧不足，无法计算频率。")
+        # ==========================================
+
 
         # === B. 逐帧发送数据 ===
         for i in range(total_frames):

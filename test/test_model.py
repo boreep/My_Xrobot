@@ -19,7 +19,6 @@ robot.set_velocity_limit("right_joint_5", 1.0)
 robot.set_velocity_limit("right_joint_6", 1.5)
 
 
-viz = robot_viz(robot)
 
 solver = placo.KinematicsSolver(robot)
 solver.mask_fbase(True)
@@ -40,8 +39,9 @@ avoid_self_collisions.self_collisions_trigger = 0.15 # [m]
 # Enable velocity limits
 solver.enable_velocity_limits(True)
 
-
 viz = robot_viz(robot)
+
+
 t = 0
 dt = 0.005
 solver.dt = dt

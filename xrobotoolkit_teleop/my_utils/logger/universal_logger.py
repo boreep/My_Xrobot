@@ -10,6 +10,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Any
 import sys
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 
 # 自动定位项目根目录 (保留你的原始逻辑)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..','..'))
@@ -50,6 +52,8 @@ class GroupRecorder:
         self.handlers = handlers
         self._lock = threading.Lock()
         self._latest_frame = None 
+        self.last_update_time = 0.0  # 初始化上次更新时间为 0
+        cb_group = getattr(node, 'cb_group', None)
         
         # 遍历配置中的所有 key (例如 joint_cmd, joint_state)
         for key, topic_suffix in topic_config.items():
@@ -67,7 +71,13 @@ class GroupRecorder:
             
             # 3. 创建订阅
             # 注意：message_filters.Subscriber 不需要 callback，它被传入 Synchronizer
-            sub = message_filters.Subscriber(node, msg_type, full_topic)
+        # 修改这里：显式将 callback_group 传给 Subscriber
+            sub = message_filters.Subscriber(
+                node, 
+                msg_type, 
+                full_topic,
+                callback_group=cb_group # <-- 确保订阅者也加入这个可重入组
+            )
             self.subs.append(sub)
             self.keys.append(key)
             node.get_logger().info(f"[{group_name}] Listening: {full_topic} (as {key})")
@@ -75,30 +85,35 @@ class GroupRecorder:
         # 4. 只有当该组内有有效话题时，才注册同步器
         if self.subs:
             # allow_headerless=True 允许处理没有 header 的消息（如果有的话），但最好都有 header
-            self.sync = message_filters.ApproximateTimeSynchronizer(self.subs, queue_size=30, slop=0.05)
+            self.sync = message_filters.ApproximateTimeSynchronizer(self.subs, queue_size=30, slop=0.075)
             self.sync.registerCallback(self.sync_callback)
         else:
             node.get_logger().error(f"[{group_name}] No valid topics found to record!")
 
     def sync_callback(self, *msgs):
         """后台接收回调，将该组内多话题对齐后的数据存入 _latest_frame"""
-        frame_data = {}
+        # === [优化] 前端限流 ===
+        # 获取当前时间
         now = self.node.get_clock().now().nanoseconds / 1e9
+        
+        # 只有当距离上次有效帧超过一定时间（比如 0.045秒）才进行解析
+        # 这样可以防止 60Hz 的相机把 CPU 跑满
+        # 0.045s 略小于 0.05s (20Hz)，保证 Timer 来取的时候肯定有较新的数据
+        if self._latest_frame is not None:
+            # 这里的 last_update_time 需要你在 __init__ 里初始化为 0
+            if (now - self.last_update_time) < 0.025: 
+                return
+        
+        frame_data = {}
         try:
             for i, msg in enumerate(msgs):
                 key = self.keys[i]
                 parser = self.handlers[key]['parser']
                 frame_data[key] = parser(msg)
                 
-                # 以第一个话题的时间戳作为该组的 Frame 时间戳
-                if i == 0:
-                    if hasattr(msg, 'header'):
-                        frame_data["timestamp"] = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-                    else:
-                        frame_data["timestamp"] = now
-            
             with self._lock:
                 self._latest_frame = frame_data
+                self.last_update_time = now # 更新时间标记
 
         except Exception as e:
             self.node.get_logger().warn(f"[{self.group_name}] Parse Error: {e}")
@@ -130,8 +145,12 @@ class UniversalDataLogger(Node):
     def __init__(self, config: Dict[str, Any]):
         super().__init__('universal_logger')
         
+        # 1. 创建一个允许重入的回调组
+        self.cb_group = ReentrantCallbackGroup()
+        
         self.config_cache = config
         self.cv_bridge = CvBridge()
+        self.global_timestamp_buffer = []
         
         # === 1. 解析系统级参数 ===
         # 这些 key 是系统预留的，不会被当做 "采集组"
@@ -139,7 +158,7 @@ class UniversalDataLogger(Node):
         
         base_dir = config.get('base_dir', 'robot_dataset')
         task_name = config.get('task_name', 'default_task')
-        target_rate = config.get('sampling_rate', 20)
+        target_rate = config.get('sampling_rate', 25)
         self.target_rate = target_rate
 
         self.current_state = RecorderState.IDLE
@@ -200,7 +219,11 @@ class UniversalDataLogger(Node):
             # 可以在这里抛出异常或退出，视需求而定
 
         # === 5. 启动核心 Timer ===
-        self.timer = self.create_timer(1.0 / self.target_rate, self.timer_callback)
+        self.timer = self.create_timer(
+            1.0 / self.target_rate, 
+            self.timer_callback, 
+            callback_group=self.cb_group
+        )
         self.get_logger().info(f"[System] Ready. Sampling Rate: {target_rate}Hz. Active Groups: {list(self.recorders.keys())}")
 
     def _parse_pose(self, msg):
@@ -219,9 +242,8 @@ class UniversalDataLogger(Node):
                 
                 # 2. [新增] 调整分辨率
                 # 目标尺寸: (Width, Height) -> 推荐 (224, 224) 适配 ResNet
-                # interpolation=cv2.INTER_AREA 是缩小的最佳插值算法
                 target_size = (224, 224) 
-                cv_image = cv2.resize(cv_image, target_size, interpolation=cv2.INTER_AREA)
+                cv_image = cv2.resize(cv_image, target_size, interpolation=cv2.INTER_LINEAR)
 
                 return cv_image 
 
@@ -312,6 +334,8 @@ class UniversalDataLogger(Node):
         # 1. 门控
         if self.current_state != RecorderState.RECORDING or not self.is_active:
             return
+        
+        current_time = self.get_clock().now().nanoseconds / 1e9
 
         # 2. 采集所有组的数据 (Zero-Order Hold 准备)
         current_frames = {}
@@ -328,7 +352,10 @@ class UniversalDataLogger(Node):
         if not all_ready:
             self.get_logger().warn("Waiting for initial data from ALL groups...", throttle_duration_sec=1)
             return
-
+        
+        # [修改点] 记录当前时间戳
+        self.global_timestamp_buffer.append(current_time)
+        
         # 4. 写入 Buffer
         for group_name, recorder in self.recorders.items():
             recorder.record_frame(current_frames[group_name])
@@ -338,9 +365,12 @@ class UniversalDataLogger(Node):
             # 清空所有 recorder 的 buffer
             for recorder in self.recorders.values():
                 recorder.clear()
+            
+            # [修改点] 清空全局时间戳
+            self.global_timestamp_buffer = []
+            
             self.current_state = RecorderState.RECORDING
             self.get_logger().info(f">>> START RECORDING (Ep {self.episode_count}) <<<")
-
     def stop_episode(self):
         if self.current_state == RecorderState.RECORDING:
             self.current_state = RecorderState.IDLE
@@ -374,6 +404,9 @@ class UniversalDataLogger(Node):
             structures = {}
             
             with h5py.File(full_filepath, 'w') as f:
+                # [修改点] 1. 在根目录写入全局时间戳
+                timestamps = np.array(self.global_timestamp_buffer, dtype=np.float64)
+                f.create_dataset("timestamp", data=timestamps, compression="gzip")
                 # 遍历所有 Recorder，分别为它们创建 Group
                 for group_name, recorder in self.recorders.items():
                     h5_group = f.create_group(group_name)
@@ -388,9 +421,7 @@ class UniversalDataLogger(Node):
             self.get_logger().info(f"Saved: {filename_only} (Frames: {total_frames})")
             
             # 计算时长
-            # 取第一个组的时间戳来计算即可
-            first_buf = first_group.buffer
-            duration = first_buf[-1]['timestamp'] - first_buf[0]['timestamp']
+            duration = self.global_timestamp_buffer[-1] - self.global_timestamp_buffer[0]
 
             # 更新 Episode 记录
             ep_info = {
@@ -440,15 +471,12 @@ class UniversalDataLogger(Node):
                 data = np.stack([frame[key] for frame in buffer])
                 group.create_dataset(key, data=data, compression="gzip", compression_opts=6)
         
-        timestamps = np.array([frame["timestamp"] for frame in buffer])
-        group.create_dataset("timestamp", data=timestamps, compression="gzip")
         group.attrs['num_frames'] = n_frames
         group.attrs['group_name'] = group_name
 
     def _analyze_structure(self, buffer, keys, total_frames) -> Dict:
         structure = {}
-        structure['timestamp'] = {"shape": [total_frames], "dtype": "float64"}
-        
+
         if not buffer: return structure
         first_frame = buffer[0]
         
@@ -535,10 +563,13 @@ def main(args=None):
     config = load_config(config_path="config/default_dataset_config.yaml") 
 
     logger_node = UniversalDataLogger(config)
+    
+    executor = MultiThreadedExecutor()
+    executor.add_node(logger_node)
 
     def ros_thread_entry():
         try:
-            rclpy.spin(logger_node)
+            rclpy.spin(logger_node, executor=executor)
         except Exception:
             pass
     t = threading.Thread(target=ros_thread_entry, daemon=True)

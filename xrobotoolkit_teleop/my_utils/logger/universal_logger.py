@@ -232,25 +232,18 @@ class UniversalDataLogger(Node):
         return np.array([p.x, p.y, p.z, q.x, q.y, q.z, q.w], dtype=np.float32)
     
     def _parse_image(self, msg):
-            """ 解析 ROS Image -> Resize -> Numpy (H, W, 3) RGB """
-            try:
-                # 1. 转换格式 (保持原有逻辑)
-                if msg.encoding == "rgb8":
-                    cv_image = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-                else:
-                    cv_image = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
-                
-                # 2. [新增] 调整分辨率
-                # 目标尺寸: (Width, Height) -> 推荐 (224, 224) 适配 ResNet
-                target_size = (224, 224) 
-                cv_image = cv2.resize(cv_image, target_size, interpolation=cv2.INTER_LINEAR)
-
-                return cv_image 
-
-            except CvBridgeError as e:
-                self.get_logger().error(f"CvBridge Error: {e}")
-                # 返回空的黑图防止崩溃 (注意也要改成 target_size)
-                return np.zeros((224, 224, 3), dtype=np.uint8)
+        try:
+            # [优化] 针对 rgb8 格式，直接通过 numpy 视图读取，减少一次 cv_bridge 的内部拷贝
+            # 此时得到的 image 指向的是 ROS 消息的原始缓冲区（Zero-copy view）
+            image = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
+            
+            # 接下来只做一次核心计算：Resize
+            # OpenCV 的 resize 会释放 GIL，因此它在多线程下表现很好
+            return cv2.resize(image, (224, 224), interpolation=cv2.INTER_LINEAR)
+        except Exception as e:
+            # 如果格式不是标准的，退回到 cv_bridge 保证鲁棒性
+            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            return cv2.resize(cv_image, (224, 224))
             
     def _parse_pointcloud(self, msg):
         """ 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import sys
 import os
 import rclpy
@@ -22,8 +21,8 @@ def main(
     # robot_urdf_path: 机器人URDF模型文件路径，默认为RM65左臂模型
     robot_urdf_path: str = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf"),
     # robot_urdf_path: str = os.path.join(ASSET_PATH, "right_rm65f/right_rm65.urdf"),
-    # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.13
-    scale_factor: float = 1.2,
+    # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.3
+    scale_factor: float = 1.3,
 ):
     rclpy.init()
 
@@ -39,12 +38,12 @@ def main(
         control_rate_hz=50,
         self_collision_avoidance_enabled=True,
         enable_log_data=True,
+        logger_config_path = "config/default_dataset_config.yaml",
+        
     )
 
     kinetic_energy_task = controller.solver.add_kinetic_energy_regularization_task(1e-6)
     
-
-
 
     # 启动控制器运行
     controller.init_arm()

@@ -8,8 +8,7 @@ import threading
 import yaml
 from rclpy.executors import MultiThreadedExecutor
 
-from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import DualArmDataLogger, RecorderState
-from xrobotoolkit_teleop.my_utils.logger.single_arm_logger import SingleArmDataLogger
+from xrobotoolkit_teleop.my_utils.logger.universal_logger import UniversalDataLogger,RecorderState
 
 from xrobotoolkit_teleop.my_utils.base_robot_teleop_controller import RobotTeleopController
 from xrobotoolkit_teleop.my_utils.ros2_rm65 import (
@@ -91,7 +90,6 @@ class AllRobotTeleopController(RobotTeleopController):
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
         logger_config_path: str = "config/default_dataset_config.yaml",
-        is_log_dual_arm: bool = False,
         # 删除 enable_camera 和 camera_fps 参数
     ):
 
@@ -112,14 +110,12 @@ class AllRobotTeleopController(RobotTeleopController):
             control_rate_hz=control_rate_hz,
             self_collision_avoidance_enabled=self_collision_avoidance_enabled,
             enable_log_data=enable_log_data,
-            logger_config_path=logger_config_path,
-            is_log_dual_arm=is_log_dual_arm,
 
         )
         
                 # 如果启用了日志，初始化 ROS 节点
         if self.enable_log_data:
-            self._init_logging_node(logger_config_path, is_log_dual_arm)
+            self._init_logging_node(logger_config_path)
    
 
     def _placo_setup(self):
@@ -250,7 +246,7 @@ class AllRobotTeleopController(RobotTeleopController):
                 controller.publish_arm_control()
 
 
-    def _init_logging_node(self, config_path: str, is_dual_arm: bool):
+    def _init_logging_node(self, config_path: str):
         """
         初始化 ROS2 Logger 节点
         """
@@ -275,13 +271,8 @@ class AllRobotTeleopController(RobotTeleopController):
             config = yaml.safe_load(f)
         
         # 3. 实例化对应的 Logger
-        if is_dual_arm:
-            print(f"[Logger] {TerminalColor.OKGREEN}Mode: 双臂{TerminalColor.ENDC}")
-            self.data_logger = DualArmDataLogger(config)
-        else:
-            print(f"[Logger] {TerminalColor.OKGREEN}Mode: 右臂{TerminalColor.ENDC}")
-            # 或者在这里传入 arm_side 参数
-            self.data_logger = SingleArmDataLogger(config)
+        self.data_logger = UniversalDataLogger(config)
+
             
 # === 修改后的日志逻辑处理 ===
     def _handle_logging_logic(self):

@@ -12,7 +12,6 @@ from placo_utils.visualization import (
     robot_viz,
 )
 
-from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import DualArmDataLogger
 from xrobotoolkit_teleop.common.xr_client import XrClient
 from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
@@ -22,7 +21,7 @@ from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
     calc_parallel_gripper_position,
 )
 
-SELF_COLLISION_MARGIN = 0.05  # 自碰撞避免的默认安全距离 [m]
+SELF_COLLISION_MARGIN = 0.075  # 自碰撞避免的默认安全距离 [m]
 SELF_COLLISION_TRIGGER = 0.2  # 自碰撞避免的触发距离   [m]
 
 class BaseController(abc.ABC):

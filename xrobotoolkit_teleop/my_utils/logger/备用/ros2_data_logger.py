@@ -161,7 +161,7 @@ class DualArmDataLogger(Node):
         self.handlers = {
             "joint_cmd":   { "type": Jointpos, "parser": lambda msg: np.array(msg.joint, dtype=np.float32) },
             "ik_target":   { "type": PoseStamped, "parser": self._parse_pose },
-            "gripper":     { "type": HeaderFloat32, "parser": lambda msg: np.array([msg.data], dtype=np.float32) },
+            "gripper_cmd":     { "type": HeaderFloat32, "parser": lambda msg: np.array([msg.data], dtype=np.float32) },
             "joint_state": { "type": JointState, "parser": lambda msg: np.array(msg.position, dtype=np.float32) }
         }
 

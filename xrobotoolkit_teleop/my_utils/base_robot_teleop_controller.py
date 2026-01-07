@@ -10,10 +10,6 @@ from xrobotoolkit_teleop.my_utils.base_controller import BaseController
 from xrobotoolkit_teleop.utils.terminalcolor import TerminalColor
 
 
-
-# 假设文件路径如下，请根据实际情况调整 import 路径
-from xrobotoolkit_teleop.my_utils.logger.ros2_data_logger import RecorderState
-
 class RobotTeleopController(BaseController, ABC):
     """
     An abstract base class for hardware teleoperation controllers that consolidates
@@ -32,8 +28,6 @@ class RobotTeleopController(BaseController, ABC):
         control_rate_hz: int,
         self_collision_avoidance_enabled: bool,
         enable_log_data: bool,
-        logger_config_path: str = "config/default_dataset_config.yaml",
-        is_log_dual_arm: bool = False
     ):
         super().__init__(
             robot_urdf_path=robot_urdf_path,

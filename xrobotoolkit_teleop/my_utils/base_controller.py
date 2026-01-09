@@ -118,6 +118,22 @@ class BaseController(abc.ABC):
             delta_rot = quat_diff_as_angle_axis(self.ref_controller_quat[src_name], controller_quat)
 
         return delta_xyz, delta_rot
+    
+    def _process_xr_velocity(self, xr_linear_vel, xr_angular_vel):
+        """
+        处理 XR 速度数据
+        :param xr_linear_vel: SDK 返回的线速度 [vx, vy, vz]
+        :param xr_angular_vel: SDK 返回的角速度 [wx, wy, wz]
+        """
+        # 1. 线速度处理 (同样需要旋转)
+        # 即使你觉得 xyz 不需要调整，但如果 R_headset_world 存在旋转，线速度方向也必须跟着转，
+        robot_linear_vel = self.R_headset_world @ np.array(xr_linear_vel) * self.scale_factor
+
+        # 2. 角速度处理 (必须旋转)
+        # 将 VR 坐标系下的旋转轴映射到机器人世界坐标系
+        robot_angular_vel = self.R_headset_world @ np.array(xr_angular_vel)
+
+        return robot_linear_vel, robot_angular_vel
 
     def _placo_setup(self):
         """设置Placo逆运动学求解器"""

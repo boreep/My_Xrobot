@@ -2,10 +2,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 import numpy as np
-import os
-import sys
-# 自动定位到 My_Xrobot 这一层
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Header

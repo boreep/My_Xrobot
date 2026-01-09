@@ -1,8 +1,5 @@
-import sys
 import os
 import rclpy
-# 自动定位到 My_Xrobot 这一层
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tyro
 import numpy as np
 from xrobotoolkit_teleop.my_utils.allrobot_teleop_controller import (
@@ -22,7 +19,7 @@ def main(
     robot_urdf_path: str = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf"),
     # robot_urdf_path: str = os.path.join(ASSET_PATH, "right_rm65f/right_rm65.urdf"),
     # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.3
-    scale_factor: float = 1.3,
+    scale_factor: float = 1.2,
 ):
     rclpy.init()
 

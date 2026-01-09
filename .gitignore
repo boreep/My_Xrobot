@@ -3,3 +3,8 @@
 *~*/
 dataset/
 .vscode/c_cpp_properties.json
+xrobotoolkit_teleop/xrobotoolkit_teleop.egg-info/
+xrobotoolkit_teleop.egg-info/dependency_links.txt
+xrobotoolkit_teleop.egg-info/PKG-INFO
+xrobotoolkit_teleop.egg-info/SOURCES.txt
+xrobotoolkit_teleop.egg-info/top_level.txt

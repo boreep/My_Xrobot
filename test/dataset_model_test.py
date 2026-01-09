@@ -61,7 +61,7 @@ def playback_h5(file_path):
             print("Error: 'left_arm' group not found in H5 file.")
             return
 
-        l_timestamps = f['left_arm']['timestamp'][:]
+        timestamps = f['timestamp'][:]
         l_states = f['left_arm']['joint_state'][:]  # Shape通常是 (N, 7) 或 (N, 6)
         l_cmds = f['left_arm']['joint_cmd'][:]
         
@@ -74,18 +74,18 @@ def playback_h5(file_path):
         else:
             print("No right arm data found, skipping.")
 
-        num_frames = len(l_timestamps)
+        num_frames = len(timestamps)
         print(f"Total frames to play: {num_frames}")
         print("Starting playback in 3 seconds...")
         time.sleep(3)
 
         # --- 循环播放 ---
         start_real_time = time.time()
-        start_log_time = l_timestamps[0] # 记录开始时的日志时间戳 (秒)
+        start_log_time = timestamps[0] # 记录开始时的日志时间戳 (秒)
 
         for i in range(num_frames):
             # 1. 时间同步
-            current_log_time = l_timestamps[i]
+            current_log_time = timestamps[i]
             
             # 计算这一帧在日志里相对于开始过了多久
             time_elapsed_log = current_log_time - start_log_time

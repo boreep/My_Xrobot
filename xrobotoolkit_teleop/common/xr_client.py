@@ -8,7 +8,7 @@ class XrClient:
     def __init__(self):
         """Initializes the XrClient and the SDK."""
         xrt.init()
-        print(f"{TerminalColor.OKGREEN}XRoboToolkit SDK initialized.{TerminalColor.ENDC}")
+        print(f"{TerminalColor.OKGREEN}XRoboToolkit SDK 已启动.{TerminalColor.ENDC}")
 
     def get_pose_by_name(self, name: str) -> np.ndarray:
         """Returns the pose of the specified device by name.
@@ -23,6 +23,19 @@ class XrClient:
         else:
             raise ValueError(
                 f"{TerminalColor.FAIL}Invalid name: {name}. Valid names are: 'left_controller', 'right_controller', 'headset'.{TerminalColor.ENDC}"
+            )
+            
+    def get_velocity_by_name(self, name: str) -> np.ndarray:
+        """Returns the velocity of the specified device by name.
+        Valid names: "left_controller", "right_controller".
+        Velocity is [vx, vy, vz]."""
+        if name == "left_controller":
+            return xrt.get_left_controller_velocity()
+        elif name == "right_controller":
+            return xrt.get_right_controller_velocity()
+        else:
+            raise ValueError(
+                f"{TerminalColor.FAIL}Invalid name: {name}. Valid names are: 'left_controller', 'right_controller'.{TerminalColor.ENDC}"
             )
 
     def get_key_value_by_name(self, name: str) -> float:

@@ -1,7 +1,4 @@
-import sys
 import os
-# 自动定位到 My_Xrobot 这一层
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tyro
 import numpy as np
 from xrobotoolkit_teleop.simulation.placo_teleop_controller import (

@@ -24,20 +24,20 @@ def main():
         # 1. 相机数据
         images = f['camera']['image'][:]# type: ignore
         points = f['camera']['point'][:]# type: ignore
-        cam_timestamps = f['camera']['timestamp'][:]# type: ignore
+        timestamps = f['timestamp'][:]# type: ignore
         
         # 2. 机械臂数据
         joint_cmds = f['left_arm']['joint_cmd'][:]    # shape: (N, 7)# type: ignore
         joint_states = f['left_arm']['joint_state'][:] # shape: (N, 7)# type: ignore
         
-        total_frames = len(cam_timestamps)# type: ignore
+        total_frames = len(timestamps)# type: ignore
         print(f"✅ 加载完成，共 {total_frames} 帧。")
 # ==========================================
         # === A+. [新增] 数据集频率分析逻辑 ===
         # ==========================================
         if total_frames > 1:
             # 计算相邻时间戳的差值 (dt)
-            intervals = np.diff(cam_timestamps) # type: ignore
+            intervals = np.diff(timestamps) # type: ignore
             
             # 统计指标
             avg_dt = np.mean(intervals)       # 平均间隔 (秒)
@@ -49,8 +49,8 @@ def main():
             freq = 1.0 / avg_dt if avg_dt > 0 else 0
             
             print("-" * 40)
-            print(f"📊 数据集时间轴分析报告:")
-            print(f"  - 总录制时长 : {cam_timestamps[-1] - cam_timestamps[0]:.2f} 秒") # type: ignore
+            print(f"📊 数据集时间轴分析报告(注意，若是中间发生了数据集暂停，则该报告无参考价值，因为时间辍已经断开):")
+            print(f"  - 总录制时长 : {timestamps[-1] - timestamps[0]:.2f} 秒") # type: ignore
             print(f"  - 平均频率   : {freq:.2f} Hz")
             print(f"  - 平均间隔   : {avg_dt*1000:.2f} ms ({avg_dt:.6f} s)")
             print(f"  - 间隔抖动(std): {std_dt*1000:.2f} ms")

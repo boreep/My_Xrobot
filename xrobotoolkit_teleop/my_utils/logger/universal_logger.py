@@ -13,8 +13,6 @@ import sys
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-# 自动定位项目根目录 (保留你的原始逻辑)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..','..'))
 from xrobotoolkit_teleop.utils.path_utils import DATASET_PATH # 假设环境里有这个，如果报错请注释掉
 
 

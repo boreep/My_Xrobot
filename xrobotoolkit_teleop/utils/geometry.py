@@ -1,6 +1,5 @@
 import numpy as np
 import meshcat.transformations as tf
-
 R_HEADSET_TO_WORLD = np.array(
     [
         [0, 0, -1],

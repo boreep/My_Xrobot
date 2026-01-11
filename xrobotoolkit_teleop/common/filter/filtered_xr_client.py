@@ -99,16 +99,16 @@ class FilteredXrClient(XrClient):
     def __init__(
         self,
         # 位置滤波参数
-        pos_min_cutoff=0.1,
-        pos_beta=0.05,
+        pos_min_cutoff=1.0,
+        pos_beta=0.2,
 
         # 姿态滤波参数
-        rot_min_cutoff=0.3,
-        rot_beta=0.02,
+        rot_min_cutoff=1.0,
+        rot_beta=0.1,
 
         # 速度滤波参数（6D）
-        vel_min_cutoff=0.2,
-        vel_beta=0.1,
+        vel_min_cutoff=1.0,
+        vel_beta=0.3,
     ):
         super().__init__()
 

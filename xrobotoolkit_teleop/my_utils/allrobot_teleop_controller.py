@@ -85,8 +85,8 @@ class AllRobotTeleopController(RobotTeleopController):
         R_headset_world: np.ndarray = R_HEADSET_TO_WORLD,
         scale_factor: float = DEFAULT_SCALE_FACTOR,
         q_init: np.ndarray = np.concatenate([LEFT_INITIAL_JOINT_DEG,RIGHT_INITIAL_JOINT_DEG]),
-        visualize_placo: bool = False,
-        control_rate_hz: int = 100,
+        visualize_placo: bool = True,
+        control_rate_hz: int = 50,
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
         logger_config_path: str = "config/default_dataset_config.yaml",
@@ -113,7 +113,7 @@ class AllRobotTeleopController(RobotTeleopController):
 
         )
         
-                # 如果启用了日志，初始化 ROS 节点
+                # 如果启用了记录数据集，初始化logger ROS 节点
         if self.enable_log_data:
             self._init_logging_node(logger_config_path)
    

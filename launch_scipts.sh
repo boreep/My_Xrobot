@@ -18,4 +18,4 @@ echo "Using Python: $(which python)"
 echo "LD_LIBRARY_PATH head: $(echo $LD_LIBRARY_PATH | cut -d: -f1)"
 
 # 6. 运行你的 Python 脚本，并传递所有参数 ($@)
-python /home/hxd/code/My_Xrobot/scripts/teleop_robot.py "$@"
+python /home/hxd/code/My_Xrobot/scripts/csv_teleop.py "$@"

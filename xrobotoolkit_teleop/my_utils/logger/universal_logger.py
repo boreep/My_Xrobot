@@ -18,7 +18,6 @@ from xrobotoolkit_teleop.utils.path_utils import DATASET_PATH # 假设环境里�
 
 # === 新增：视觉相关依赖 ===
 import cv2
-from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2 as pc2 # ROS2 里的标准点云处理库
 
@@ -32,6 +31,24 @@ class RecorderState(Enum):
     IDLE = 0        
     RECORDING = 1   
 
+
+# === 新增的工具函数 ===
+def ros2_img_to_cv2(msg):
+    dtype = np.uint8
+    n_channels = 3
+    if '16UC1' in msg.encoding or 'mono16' in msg.encoding:
+        dtype = np.uint16
+        n_channels = 1
+    elif '8UC1' in msg.encoding or 'mono8' in msg.encoding:
+        n_channels = 1
+    elif 'bgra8' in msg.encoding or 'rgba8' in msg.encoding:
+        n_channels = 4
+    img = np.frombuffer(msg.data, dtype=dtype)
+    try:
+        img = img.reshape((msg.height, msg.width, n_channels))
+    except ValueError:
+        return np.zeros((msg.height, msg.width, 3), dtype=np.uint8)
+    return img
 # ==========================================
 #           通用积木块：组数据接收器
 # ==========================================
@@ -147,7 +164,6 @@ class UniversalDataLogger(Node):
         self.cb_group = ReentrantCallbackGroup()
         
         self.config_cache = config
-        self.cv_bridge = CvBridge()
         self.global_timestamp_buffer = []
         
         # === 1. 解析系统级参数 ===
@@ -230,18 +246,18 @@ class UniversalDataLogger(Node):
         return np.array([p.x, p.y, p.z, q.x, q.y, q.z, q.w], dtype=np.float32)
     
     def _parse_image(self, msg):
-        try:
-            # [优化] 针对 rgb8 格式，直接通过 numpy 视图读取，减少一次 cv_bridge 的内部拷贝
-            # 此时得到的 image 指向的是 ROS 消息的原始缓冲区（Zero-copy view）
-            image = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
-            
-            # 接下来只做一次核心计算：Resize
-            # OpenCV 的 resize 会释放 GIL，因此它在多线程下表现很好
-            return cv2.resize(image, (224, 224), interpolation=cv2.INTER_LINEAR)
-        except Exception as e:
-            # 如果格式不是标准的，退回到 cv_bridge 保证鲁棒性
-            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
-            return cv2.resize(cv_image, (224, 224))
+            try:
+                # 使用新的手动转换函数
+                image = ros2_img_to_cv2(msg)
+                
+                # 缩放 (可选，保留你原有的逻辑)
+                # 这里的 interpolation 参数可以保留
+                return cv2.resize(image, (224, 224), interpolation=cv2.INTER_LINEAR)
+                
+            except Exception as e:
+                self.get_logger().warn(f"Image Parse Error: {e}")
+                # 返回一个空的黑图，防止整个程序崩溃
+                return np.zeros((224, 224, 3), dtype=np.uint8)
             
     def _parse_pointcloud(self, msg):
         """ 

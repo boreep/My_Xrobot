@@ -16,14 +16,24 @@ LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
 # RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([0, 0, 0, 0, 0, 0.0]))
 
 # 通用关节速度限制（不带左右前缀，仅关节编号）
+# ARM_VELOCITY_LIMITS = {
+#     "joint_1": 2.0,
+#     "joint_2": 2.0,
+#     "joint_3": 3.0,
+#     "joint_4": 3.0,
+#     "joint_5": 3.0,
+#     "joint_6": 3.0,
+# }
+
 ARM_VELOCITY_LIMITS = {
-    "joint_1": 2.0,
-    "joint_2": 2.0,
-    "joint_3": 3.0,
-    "joint_4": 3.14,
-    "joint_5": 3.14,
-    "joint_6": 3.14,
+    "joint_1": 1.0,
+    "joint_2": 1.0,
+    "joint_3": 1.5,
+    "joint_4": 2.0,
+    "joint_5": 2.0,
+    "joint_6": 2.0,
 }
+
 
 class RM65Controller(Node):
     def __init__(

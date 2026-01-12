@@ -409,7 +409,7 @@ class AllRobotTeleopController(RobotTeleopController):
             arm_data = cmd_data.get(arm_name)
             if not arm_data:
                 continue
-                
+
             # 1. 处理机械臂运动
             # 如果 IK 线程算出的是 None (未激活)，则不发送新的 q_des
             # Controller 会保持上一次的位置 (或者您可以显式发送当前位置)

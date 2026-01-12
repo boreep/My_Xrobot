@@ -5,6 +5,7 @@ import rclpy
 import numpy as np
 import time
 import threading
+import copy
 import yaml
 from rclpy.executors import MultiThreadedExecutor
 
@@ -112,6 +113,20 @@ class AllRobotTeleopController(RobotTeleopController):
             enable_log_data=enable_log_data,
 
         )
+        # === 新增：线程同步机制 ===
+        self._cmd_lock = threading.Lock()
+        # 共享缓冲区：存储最新的 IK 结果
+        # 结构：{ arm_name: {'q_des': [], 'dq_des': [], 'gripper': ...} }
+        self._latest_command_buffer = {}
+        
+        # 初始化缓冲区，防止发送线程启动时报错
+        for arm_name in ["left_arm", "right_arm"]:
+            self._latest_command_buffer[arm_name] = {
+                'q_des': None,   # 初始为空，发送时做检查
+                'dq_des': [0.0]*6,
+                'gripper_pos': {},
+                'ik_target': None
+            }
         
                 # 如果启用了记录数据集，初始化logger ROS 节点
         if self.enable_log_data:
@@ -207,43 +222,214 @@ class AllRobotTeleopController(RobotTeleopController):
                     time.sleep(0.5)
                     continue
                 self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
+
+
+    def calculate_feedforward_velocity(self, arm_name, controller_vel):
+        """
+        [极速直通版] 实时前馈速度
+        - 去除了所有滤波平滑，追求极致响应 (Zero Latency)
+        - 保留多臂状态隔离 (用于异常时的安全衰减)
+        - SVD + 动态阻尼保证数值计算不炸
+        """
         
-
-
-    def _ik_thread(self, stop_event: threading.Event):
-        """Dedicated thread for running the IK solver."""
-        while not stop_event.is_set():
-            start_time = time.time()
-            self._update_gripper_target()
-            self._pre_ik_update()
-            # if self.visualize_placo:
-            #     self._update_placo_viz()
-            self._update_ik() #IK执行完成后立即赋值，而非在_send_command中赋值
-            for arm_name, controller in self.arm_controllers.items():
-                if self.active[arm_name]:
-                    controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
-                       
-            elapsed_time = time.time() - start_time
-            sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-        print(f"[IK_Thread] {TerminalColor.FAIL}IK loop has stopped.{TerminalColor.FAIL}")
-
+        # --------- 0. 多臂状态隔离初始化 ---------
+        # 这里的 _dq_last 现在仅用于 "异常情况下的安全衰减兜底"
+        # 正常运行时不再参与计算
+        if not hasattr(self, "_dq_last"):
+            self._dq_last = {}
         
-    def _send_command(self):
-        """Sends the solved joint targets to both arm controllers."""
-        for arm_name, controller in self.arm_controllers.items():
-            # if self.active.get(arm_name, False):
-            #     controller.q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
-            controller.ik_target =self.ik_targets[arm_name]
+        if arm_name not in self._dq_last:
+            self._dq_last[arm_name] = None
+
+        try:
+            # ---------- 1. Jacobian & Frame ID ----------
+            link_name = self.manipulator_config[arm_name]["link_name"]
             
+            # 如果 placo 支持字符串直接查：
+            J = self.placo_robot.frame_jacobian(link_name)
+            # 如果需要 ID: 
+            # frame_id = self.placo_robot.get_frame_index(link_name)
+            # J = self.placo_robot.frame_jacobian(frame_id)
+
+            v_cartesian = np.asarray(controller_vel, dtype=float).reshape(-1)
+
+            # ---------- 2. SVD 分解 (稳定性核心) ----------
+            # full_matrices=False 牺牲微秒级精度换取速度
+            U, S, Vt = np.linalg.svd(J, full_matrices=False)
+
+            # ---------- 3. 动态阻尼 DLS ----------
+            sigma_min = S[-1]
+            lambda_min = 0.005 
+            lambda_max = 0.05
+            # 接近奇异时阻尼陡增，物理上抑制速度，防止电机过载
+            lambda_dls = lambda_min + (lambda_max - lambda_min) * np.exp(-sigma_min / 0.01)
+
+            # ---------- 4. 计算阻尼伪逆 ----------
+            S_damped = S / (S**2 + lambda_dls**2)
+            J_pinv = Vt.T @ np.diag(S_damped) @ U.T
+
+            dq_full = J_pinv @ v_cartesian
+
+            # ---------- 5. 维度切片 ----------
+            if hasattr(self, "placo_arm_joint_slice"):
+                dq_arm = dq_full[self.placo_arm_joint_slice[arm_name]]
+            else:
+                dq_arm = dq_full
+
+            # ---------- 6. 数值安全检查 ----------
+            if not np.all(np.isfinite(dq_arm)):
+                raise FloatingPointError("NaN/Inf detected in IK velocity")
+
+            # ---------- 7. 更新缓存并直通返回 (无滤波) ----------
+            # 我们记录它仅仅是为了万一下一帧炸了，能有个东西拿来衰减
+            self._dq_last[arm_name] = dq_arm
+            
+            return dq_arm
+
+        except Exception as e:
+            # ---------- 8. 安全兜底 (Decay) ----------
+            # 只有在数学计算崩溃（如完全奇异导致NaN）时才会走到这里
+            # 策略：基于上一帧速度迅速衰减，而不是硬切断
+            if self._dq_last.get(arm_name) is not None:
+                fallback = self._dq_last[arm_name] * 0.8 # 衰减快一点，尽快停下
+                if np.max(np.abs(fallback)) < 1e-4:
+                    fallback = np.zeros_like(fallback)
+                self._dq_last[arm_name] = fallback
+                return fallback
+            else:
+                return np.zeros(6)
+    # ============================================================
+    # 线程 1 (生产者): IK 计算线程 - 尽力而为，不负责定时
+    # ============================================================
+    def _ik_thread(self, stop_event: threading.Event):
+        """
+        IK 线程只负责计算，计算完毕后更新共享缓冲区。
+        它不需要严格 sleep，算完就更新，保证数据最新鲜。
+        """
+        print(f"[IK_Thread] {TerminalColor.OKGREEN}IK 计算线程启动{TerminalColor.ENDC}")
+        
+        while not stop_event.is_set():
+            # 1. 记录计算开始
+            # start_time = time.time()
+            
+            # 2. 执行计算逻辑
+            self._update_gripper_target() # 更新夹爪目标
+            self._pre_ik_update()         # 更新 state
+            self._update_ik()             # 核心 IK 求解 (耗时波动点)
+            
+            # 3. 准备要提交的数据包
+            new_commands = {}
+            
+            for arm_name in ["left_arm", "right_arm"]:
+                if self.active[arm_name]:
+                    # 获取目标关节角度
+                    q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
+                    
+                    # 计算前馈速度 (使用您之前修正好的代码)
+                    # 注意：controller_velicity 拼写需在 Base 修正，这里假设是 controller_velocity
+                    # 如果没有 velocity，默认为 0
+                    if hasattr(self, 'controller_velocity') and arm_name in self.controller_velocity:
+                        dq_des = self.calculate_feedforward_velocity(arm_name, self.controller_velocity[arm_name]).tolist()
+                    else:
+                        dq_des = [0.0] * 6
+                    
+                    # 获取 IK Target (用于 Debug 或其他用途)
+                    ik_target = copy.deepcopy(self.ik_targets.get(arm_name))
+                else:
+                    # 如果未激活，保持 None 或由发送线程处理维持现状
+                    q_des = None
+                    dq_des = [0.0] * 6
+                    ik_target = None
+                
+                # 获取夹爪数据
+                gripper_data = copy.deepcopy(self.gripper_pos_target.get(arm_name, {}))
+
+                new_commands[arm_name] = {
+                    'q_des': q_des,
+                    'dq_des': dq_des,
+                    'gripper_pos': gripper_data,
+                    'ik_target': ik_target
+                }
+
+            # 4. 【关键】加锁更新缓冲区
+            with self._cmd_lock:
+                # 这是一个极快的内存拷贝操作，几乎不阻塞
+                for arm_name, cmd in new_commands.items():
+                    self._latest_command_buffer[arm_name] = cmd
+            
+            # 5. 可选：微小的休眠防止 CPU 100% 占用，但不要 sleep 太多
+            # 建议 sleep 1ms - 5ms，留出 CPU 给发送线程
+            time.sleep(0.01)
+        
+# ============================================================
+    # 线程 2 (消费者): 发送控制线程 - 绝对定时 50Hz
+    # ============================================================
+    def _control_thread(self, stop_event: threading.Event):
+        """
+        控制线程拥有最高优先级，严格按照 50Hz (20ms) 周期运行。
+        无论 IK 是否算完，它都会到点发送。
+        """
+        print(f"[Control_Thread] {TerminalColor.OKGREEN}50Hz 控制发送线程启动{TerminalColor.ENDC}")
+        
+        period = 1.0 / self.control_rate_hz  # 0.02s
+        next_wake_time = time.perf_counter() # 使用高精度计时器
+        
+        while not stop_event.is_set():
+            # 1. 计算下一次唤醒时间 (累计误差消除法)
+            next_wake_time += period
+            
+            # 2. 【关键】从缓冲区取出最新指令
+            cmd_snapshot = None
+            with self._cmd_lock:
+                # 深拷贝一份数据，避免持有锁的时间过长
+                # deepcopy 可能略慢，如果性能敏感，可以只做引用拷贝，但要小心数据篡改
+                # 这里数据量小，copy 耗时微秒级，安全第一
+                cmd_snapshot = copy.deepcopy(self._latest_command_buffer)
+            
+            # 3. 执行发送逻辑 (这是原来 _send_command 的内容)
+            if self.is_connected and cmd_snapshot:
+                self._dispatch_commands(cmd_snapshot)
+            
+            # 4. 绝对睡眠
+            # 计算还需要睡多久
+            sleep_duration = next_wake_time - time.perf_counter()
+            
+            if sleep_duration > 0:
+                time.sleep(sleep_duration)
+            else:
+                # 如果 sleep_duration < 0，说明逻辑执行超时了！
+                # 在 50Hz 下通常不会，除非系统极度卡顿
+                # 可以选择打印警告，但不要 break，继续追赶
+                print(f"[Control_Thread] {TerminalColor.WARNING}警告：控制线程执行超时 {sleep_duration:.6f}s{TerminalColor.ENDC}")
+                pass
+
+    def _dispatch_commands(self, cmd_data):
+        """实际将数据分发给各个 Arm Controller"""
+        for arm_name, controller in self.arm_controllers.items():
+            arm_data = cmd_data.get(arm_name)
+            if not arm_data:
+                continue
+                
+            # 1. 处理机械臂运动
+            # 如果 IK 线程算出的是 None (未激活)，则不发送新的 q_des
+            # Controller 会保持上一次的位置 (或者您可以显式发送当前位置)
+            if arm_data['q_des'] is not None:
+                controller.q_des = arm_data['q_des']
+                controller.dq_des = arm_data['dq_des']
+                # 只有激活时才发布手臂控制
+                if self.active.get(arm_name, False):
+                    controller.publish_arm_control() # 发布 ROS 话题
+            
+            # 2. 处理夹爪
             controller.q_des_gripper = [
-                self.gripper_pos_target[arm_name][gripper_joint]
-                for gripper_joint in self.gripper_pos_target[arm_name].keys()
+                arm_data['gripper_pos'][j_name] 
+                for j_name in arm_data['gripper_pos']
             ]
             controller.publish_gripper_control()
-            if self.active.get(arm_name, False):
-                controller.publish_arm_control()
+            
+            # 3. 更新 Debug 信息 (可选)
+            if arm_data['ik_target']:
+                controller.ik_target = arm_data['ik_target']
 
 
     def _init_logging_node(self, config_path: str):

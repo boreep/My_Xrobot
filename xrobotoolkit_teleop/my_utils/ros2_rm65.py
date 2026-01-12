@@ -7,8 +7,9 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Header
 from rm_ros_interfaces.msg import Jointpos, Movej
 from my_interfaces.msg import HeaderFloat32
-import time
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Twist
+
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
 RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, 0.0]))
@@ -17,21 +18,21 @@ LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
 
 # 通用关节速度限制（不带左右前缀，仅关节编号）
 # ARM_VELOCITY_LIMITS = {
-#     "joint_1": 2.0,
-#     "joint_2": 2.0,
-#     "joint_3": 3.0,
-#     "joint_4": 3.0,
-#     "joint_5": 3.0,
-#     "joint_6": 3.0,
+#     "joint_1": 3.1415926,
+#     "joint_2": 3.1415926,
+#     "joint_3": 3.927,
+#     "joint_4": 3.927,
+#     "joint_5": 3.927,
+#     "joint_6": 3.927,
 # }
 
 ARM_VELOCITY_LIMITS = {
-    "joint_1": 1.0,
-    "joint_2": 1.0,
+    "joint_1": 1.5,
+    "joint_2": 1.5,
     "joint_3": 1.5,
-    "joint_4": 2.0,
-    "joint_5": 2.0,
-    "joint_6": 2.0,
+    "joint_4": 2.5,
+    "joint_5": 2.5,
+    "joint_6": 2.5,
 }
 
 
@@ -57,6 +58,7 @@ class RM65Controller(Node):
         self.pub = self.create_publisher(Jointpos, f"{arm_side}/rm_driver/movej_canfd_cmd", qos)
         self.pub_movej = self.create_publisher(Movej, f"{arm_side}/rm_driver/movej_cmd", qos)
         self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target_pose", qos)
+        self.pub_dq = self.create_publisher(Jointpos, f"{arm_side}/dq_target", qos)
         
         self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/gripper_cmd", qos)
           
@@ -76,7 +78,10 @@ class RM65Controller(Node):
 
 #目标q
         self.q_des = None
+        self.dq_des = None
         
+        self.dq_msg = Jointpos()
+
         self.ik_target = {"pos":None, "quat":None}
         self.ik_target_msg = PoseStamped()
         self.ik_target_msg.header=Header()
@@ -88,14 +93,17 @@ class RM65Controller(Node):
         self.arm_ctrl_msg.dof=6
 
         self.q_des_gripper = [0.0] #trigger 0~1
-
+    
         self.gripper_ctrl_msg = HeaderFloat32()
         self.gripper_ctrl_msg.header=Header()
+        
+
         
         if self.arm_side == "right_arm":
             self.init_pos=RIGHT_INITIAL_JOINT_DEG.tolist()
         elif self.arm_side == "left_arm":
-            self.init_pos=LEFT_INITIAL_JOINT_DEG.tolist()    
+            self.init_pos=LEFT_INITIAL_JOINT_DEG.tolist() 
+        
         
         # Create a timer to run the control loop
         # self.timer = self.create_timer(1.0 / 20, self.control_loop)
@@ -130,7 +138,7 @@ class RM65Controller(Node):
 
         else:
             # 异常情况保留 Warning
-            self.get_logger().warn(f"[{self.arm_side}] 状态获取超时，强制执行回零流程")
+            self.get_logger().warn(f"[{self.arm_side}] 状态获取超时")
 
         # 4. 发送指令
         if go_zero_first:
@@ -180,6 +188,11 @@ class RM65Controller(Node):
         self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][2]
         self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][3]
         
+        if self.dq_des is not None:
+            self.dq_msg.joint=self.dq_des
+            self.dq_msg.header.stamp=self.arm_ctrl_msg.header.stamp
+            self.pub_dq.publish(self.dq_msg)
+        
         self.pub.publish(self.arm_ctrl_msg)
         self.pub_ik_target.publish(self.ik_target_msg)
 
@@ -211,7 +224,6 @@ class RM65Controller(Node):
         self.destroy_subscription(self.sub)
         
 
-        
 
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
@@ -236,10 +248,6 @@ def main(args=None):
             follow_mode=False # 是否开启跟随模式
         )
 
-        # 3. 【关键步骤】获取内部创建的手部控制节点
-        # 因为 handcontroller 是在该类内部实例化的另一个 Node 对象，
-        # 它必须也被加入到 executor 才能工作。
-        # hand_node = arm_node.handcontroller
 
         # 4. 创建多线程执行器
         # 这允许机械臂(100Hz)和灵巧手(20Hz)的定时器并行运行，互不阻塞

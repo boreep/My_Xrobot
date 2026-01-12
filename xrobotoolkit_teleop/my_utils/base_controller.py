@@ -13,6 +13,7 @@ from placo_utils.visualization import (
 )
 
 from xrobotoolkit_teleop.common.xr_client import XrClient
+from xrobotoolkit_teleop.common.filter.filtered_xr_client import FilteredXrClient
 from xrobotoolkit_teleop.utils.geometry import (
     apply_delta_pose,
     quat_diff_as_angle_axis,
@@ -39,6 +40,7 @@ class BaseController(abc.ABC):
         dt: float,
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
+        with_vel: bool = True,
 
     ):
         """初始化遥操作控制器基类"""
@@ -49,7 +51,9 @@ class BaseController(abc.ABC):
         self.scale_factor = scale_factor
         self.q_init = q_init
         self.dt = dt
-        self.xr_client = XrClient()
+        self.with_vel = with_vel
+        # self.xr_client = XrClient()
+        self.xr_client=FilteredXrClient()
         
         self.enable_self_collision_avoidance = self_collision_avoidance_enabled
 
@@ -67,6 +71,7 @@ class BaseController(abc.ABC):
         self.gripper_pos_target = {}    
         
         self.ik_targets = {}
+        self.controller_velocity ={}
 
         # 运动追踪器支持
         self.motion_tracker_task = {}
@@ -119,21 +124,25 @@ class BaseController(abc.ABC):
 
         return delta_xyz, delta_rot
     
-    def _process_xr_velocity(self, xr_linear_vel, xr_angular_vel):
+    def _process_xr_velocity(self, xr_vel, src_name):
         """
-        处理 XR 速度数据
-        :param xr_linear_vel: SDK 返回的线速度 [vx, vy, vz]
-        :param xr_angular_vel: SDK 返回的角速度 [wx, wy, wz]
+        处理 XR 速度数据（线速度和角速度）
+        :param xr_vel: SDK 返回的速度 [vx, vy, vz, wx, wy, wz]
+        :param src_name: 数据源名称
+        :return: 处理后的机器人线速度, 处理后的机器人角速度
         """
-        # 1. 线速度处理 (同样需要旋转)
-        # 即使你觉得 xyz 不需要调整，但如果 R_headset_world 存在旋转，线速度方向也必须跟着转，
-        robot_linear_vel = self.R_headset_world @ np.array(xr_linear_vel) * self.scale_factor
-
-        # 2. 角速度处理 (必须旋转)
-        # 将 VR 坐标系下的旋转轴映射到机器人世界坐标系
-        robot_angular_vel = self.R_headset_world @ np.array(xr_angular_vel)
-
-        return robot_linear_vel, robot_angular_vel
+        # 分割输入：前3个是线速度，后3个是角速度
+        linear_vel = np.array(xr_vel[:3])
+        angular_vel = np.array(xr_vel[3:])
+        
+        # 坐标系转换与缩放
+        robot_linear = self.R_headset_world @ linear_vel * self.scale_factor
+        robot_angular = self.R_headset_world @ angular_vel
+        
+        # 存储组合数据
+        self.controller_velocity[src_name] = np.concatenate((robot_linear, robot_angular))
+        
+        return robot_linear, robot_angular
 
     def _placo_setup(self):
         """设置Placo逆运动学求解器"""
@@ -231,6 +240,10 @@ class BaseController(abc.ABC):
                     self.ref_ee_xyz[src_name], self.ref_ee_quat[src_name] = self._get_link_pose(config["link_name"])
 
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
+                if self.with_vel:
+                    xr_velicity =self.xr_client.get_velocity_by_name(config["pose_source"])
+                    self._process_xr_velocity(xr_velicity, src_name)
+                
                 delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name)
                 
                 # 根据控制模式更新目标任务
@@ -269,6 +282,7 @@ class BaseController(abc.ABC):
             self.solver.solve(True)
         except RuntimeError as e:
             print(f"[update_ik] IK solver failed: {e}")
+            
 
     def _update_motion_tracker_tasks(self):
         """处理运动追踪器数据并更新相应的Placo任务"""

@@ -94,7 +94,8 @@ class RobotTeleopController(BaseController, ABC):
     def _pre_ik_update(self):
         """Hook for subclasses to run logic before the main IK update."""
         """placo状态更新"""
-        self._update_robot_state()
+        if not (bool(self.active) and any(self.active.values())): #在进行控制时不更新状态
+            self._update_robot_state()
         self.placo_robot.update_kinematics()
         if self.visualize_placo:
             self._update_placo_viz()

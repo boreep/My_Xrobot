@@ -388,7 +388,7 @@ class AllRobotTeleopController(RobotTeleopController):
             
             # 3. 执行发送逻辑 (这是原来 _send_command 的内容)
             if self.is_connected and cmd_snapshot:
-                self._dispatch_commands(cmd_snapshot)
+                self._send_command(cmd_snapshot)
             
             # 4. 绝对睡眠
             # 计算还需要睡多久
@@ -403,7 +403,7 @@ class AllRobotTeleopController(RobotTeleopController):
                 print(f"[Control_Thread] {TerminalColor.WARNING}警告：控制线程执行超时 {sleep_duration:.6f}s{TerminalColor.ENDC}")
                 pass
 
-    def _dispatch_commands(self, cmd_data):
+    def _send_command(self, cmd_data):
         """实际将数据分发给各个 Arm Controller"""
         for arm_name, controller in self.arm_controllers.items():
             arm_data = cmd_data.get(arm_name)

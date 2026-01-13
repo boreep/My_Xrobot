@@ -131,6 +131,8 @@ class AllRobotTeleopController(RobotTeleopController):
                 # 如果启用了记录数据集，初始化logger ROS 节点
         if self.enable_log_data:
             self._init_logging_node(logger_config_path)
+        
+        self._axis_click_state = {}
    
 
     def _placo_setup(self):
@@ -189,14 +191,14 @@ class AllRobotTeleopController(RobotTeleopController):
     def wait_for_hardware(self, timeout_sec=10.0):
             """供外部调用：阻塞等待直到收到硬件数据"""
             print(f"[Hardware_Connect] 正在等待机械臂心跳数据...")
-            start_wait = time.time()
+            start_wait = time.perf_counter()
             
             while not all(c.timestamp > 0 for c in self.arm_controllers.values()):
-                if time.time() - start_wait > timeout_sec:
+                if time.perf_counter() - start_wait > timeout_sec:
                     # 这里可以选择抛出异常，或者返回 False 让外部决定怎么处理
                     print(f"[Hardware_Connect] {TerminalColor.WARNING}警告：{timeout_sec}秒内未收到机械臂数据！{TerminalColor.ENDC}")
                     return False
-                time.sleep(0.1) # 这里的 sleep 安全，因为 ROS spin 是在独立线程跑的
+                time.sleep(0.2) # 这里的 sleep 安全，因为 ROS spin 是在独立线程跑的
                 
             print(f"[Hardware_Connect] {TerminalColor.OKGREEN}成功：所有机械臂已连接！{TerminalColor.ENDC}")
             return True
@@ -240,6 +242,42 @@ class AllRobotTeleopController(RobotTeleopController):
         
         if arm_name not in self._dq_last:
             self._dq_last[arm_name] = None
+        
+        # -------------------------------------------------------------
+        # 【新增】Step 0: 笛卡尔空间死区处理 (Deadzone)
+        # -------------------------------------------------------------
+        # controller_vel 通常是 [vx, vy, vz, wx, wy, wz]
+        v_in = np.asarray(controller_vel, dtype=float).reshape(-1)
+        
+        # 分离线速度和角速度
+        v_linear = v_in[:3]
+        v_angular = v_in[3:]
+        
+        # 阈值设定 (根据实际手感调整)
+        # 0.002 m/s = 2 mm/s (低于这个速度视为手抖)
+        LINEAR_DEADZONE = 0.01 
+        # 0.02 rad/s ≈ 1.15 deg/s (低于这个角速度视为静止)
+        ANGULAR_DEADZONE = 0.02  
+
+        # 只有当速度真的超过阈值时，才保留，否则置零
+        # 这种写法比简单的 if norm < threshold 更细腻，分别处理平移和旋转
+        if np.linalg.norm(v_linear) < LINEAR_DEADZONE:
+            v_linear = np.zeros(3)
+            
+        if np.linalg.norm(v_angular) < ANGULAR_DEADZONE:
+            v_angular = np.zeros(3)
+            
+        # 重新组合
+        v_cartesian = np.concatenate((v_linear, v_angular))
+
+        # -------------------------------------------------------------
+        # 如果彻底静止，直接返回全零，跳过繁重的 SVD 计算
+        # 这对于性能优化极大
+        if np.allclose(v_cartesian, 0.0):
+            # 更新缓存为0，用于衰减逻辑
+            self._dq_last[arm_name] = np.zeros(6) if hasattr(self, "placo_arm_joint_slice") else np.zeros_like(v_cartesian) 
+            return self._dq_last[arm_name]
+        # -------------------------------------------------------------
 
         try:
             # ---------- 1. Jacobian & Frame ID ----------
@@ -247,11 +285,6 @@ class AllRobotTeleopController(RobotTeleopController):
             
             # 如果 placo 支持字符串直接查：
             J = self.placo_robot.frame_jacobian(link_name)
-            # 如果需要 ID: 
-            # frame_id = self.placo_robot.get_frame_index(link_name)
-            # J = self.placo_robot.frame_jacobian(frame_id)
-
-            v_cartesian = np.asarray(controller_vel, dtype=float).reshape(-1)
 
             # ---------- 2. SVD 分解 (稳定性核心) ----------
             # full_matrices=False 牺牲微秒级精度换取速度
@@ -279,6 +312,9 @@ class AllRobotTeleopController(RobotTeleopController):
             # ---------- 6. 数值安全检查 ----------
             if not np.all(np.isfinite(dq_arm)):
                 raise FloatingPointError("NaN/Inf detected in IK velocity")
+            
+            if np.max(np.abs(dq_arm)) < 0.01: 
+                dq_arm = np.zeros_like(dq_arm)
 
             # ---------- 7. 更新缓存并直通返回 (无滤波) ----------
             # 我们记录它仅仅是为了万一下一帧炸了，能有个东西拿来衰减
@@ -307,10 +343,12 @@ class AllRobotTeleopController(RobotTeleopController):
         它不需要严格 sleep，算完就更新，保证数据最新鲜。
         """
         print(f"[IK_Thread] {TerminalColor.OKGREEN}IK 计算线程启动{TerminalColor.ENDC}")
+        period = 1.0 / self.control_rate_hz  # 0.02s
+        next_wake_time = time.perf_counter() # 使用高精度计时器
         
         while not stop_event.is_set():
-            # 1. 记录计算开始
-            # start_time = time.time()
+            # 1. 计算下一次唤醒时间 (累计误差消除法)
+            next_wake_time += period
             
             # 2. 执行计算逻辑
             self._update_gripper_target() # 更新夹爪目标
@@ -358,8 +396,17 @@ class AllRobotTeleopController(RobotTeleopController):
                     self._latest_command_buffer[arm_name] = cmd
             
             # 5. 可选：微小的休眠防止 CPU 100% 占用，但不要 sleep 太多
-            # 建议 sleep 1ms - 5ms，留出 CPU 给发送线程
-            time.sleep(0.01)
+            now=time.perf_counter()
+            sleep_duration = next_wake_time - now
+            
+            if sleep_duration > 0:
+                time.sleep(sleep_duration)
+            else:
+                # 如果计算超时（Lagging），不要死补之前的 sleep，直接重置时间基准
+                # 这样可以防止机器人为了“赶进度”而快速执行多次，导致动作瞬变
+                if sleep_duration < -period: 
+                     # print(f"[IK_Thread] Loop running slow! Lag: {-sleep_duration:.4f}s")
+                    next_wake_time =  now# 重置基准，丢弃过去的时间
         
 # ============================================================
     # 线程 2 (消费者): 发送控制线程 - 绝对定时 50Hz
@@ -374,6 +421,8 @@ class AllRobotTeleopController(RobotTeleopController):
         period = 1.0 / self.control_rate_hz  # 0.02s
         next_wake_time = time.perf_counter() # 使用高精度计时器
         
+        axis_btn_state = {}
+        
         while not stop_event.is_set():
             # 1. 计算下一次唤醒时间 (累计误差消除法)
             next_wake_time += period
@@ -387,7 +436,7 @@ class AllRobotTeleopController(RobotTeleopController):
                 cmd_snapshot = copy.deepcopy(self._latest_command_buffer)
             
             # 3. 执行发送逻辑 (这是原来 _send_command 的内容)
-            if self.is_connected and cmd_snapshot:
+            if cmd_snapshot:
                 self._send_command(cmd_snapshot)
             
             # 4. 绝对睡眠
@@ -404,9 +453,64 @@ class AllRobotTeleopController(RobotTeleopController):
                 pass
 
     def _send_command(self, cmd_data):
+        
+        if not hasattr(self, '_axis_click_state'):
+            self._axis_click_state = {}
+            
+        current_time = time.perf_counter()
+        
         """实际将数据分发给各个 Arm Controller"""
         for arm_name, controller in self.arm_controllers.items():
+            
+            # =========================================================
+            # Part 1: 摇杆长按检测 (合并在这里)
+            # =========================================================
+            
+            # A. 确定要检测的按钮
+            target_btn = "left_axis_click" if "left" in arm_name else "right_axis_click"
+            
+            # B. 获取按钮状态 (保留异常处理，防止 XR 掉线导致整个控制循环崩溃)
+            try:
+                is_pressed = self.xr_client.get_button_state_by_name(target_btn)
+            except Exception:
+                is_pressed = False
+            
+            # C. 初始化该臂的状态记录
+            if arm_name not in self._axis_click_state:
+                self._axis_click_state[arm_name] = {'start_time': None, 'triggered': False}
+            
+            state = self._axis_click_state[arm_name]
+            
+            # D. 状态机判断
+            if is_pressed:
+                if state['start_time'] is None:
+                    # 刚按下：记录时间
+                    state['start_time'] = current_time
+                    state['triggered'] = False
+                else:
+                    # 按住中：计算时长
+                    duration = current_time - state['start_time']
+                    if duration > 1.0 and not state['triggered']:
+                        # ---> 触发初始化 <---
+                        print(f"[Control] {TerminalColor.HEADER}检测到 {arm_name} 摇杆长按 > 1s，执行初始化Movej...{TerminalColor.ENDC}")
+                        
+                        # 【重要】必须使用独立线程，否则会卡死整个控制循环
+                        threading.Thread(
+                            target=controller.init_arm_cmd,
+                            daemon=True
+                        ).start()
+                        
+                        state['triggered'] = True # 锁定，防止重复触发
+            else:
+                # 松开：重置
+                state['start_time'] = None
+                state['triggered'] = False
+                
+            # =========================================================
+            # Part 2: 正常的运动控制逻辑
+            # =========================================================                
             arm_data = cmd_data.get(arm_name)
+            
             if not arm_data:
                 continue
 
@@ -467,6 +571,7 @@ class AllRobotTeleopController(RobotTeleopController):
         # 注意：这里假设 xr_client 已经初始化并可用
         try:
             b_button_state = self.xr_client.get_button_state_by_name("B")
+            # print(f"[Logging_Thread] B Button State: {b_button_state}")
         except Exception:
             # 如果 VR 还没准备好，默认 False
             b_button_state = False
@@ -474,22 +579,26 @@ class AllRobotTeleopController(RobotTeleopController):
         # 2. 计算 Active 状态 (死区开关或手柄检测)
         # 这里的 active 是从 BaseController 继承来的 dict，存储了各个手柄的激活状态
         current_is_active = bool(self.active) and any(self.active.values())
-        
+
         # 3. 实时同步 Active 状态给 Logger
         # Logger 会利用这个状态决定是否在 RECORDING 模式下暂停写入数据 (Pause)
         self.data_logger.update_active_status(current_is_active)
 
-        # 4. B 按钮生命周期控制 (Start / Stop Episode)
-        # 上升沿：开始新的 Episode
+        # =========================================================
+        # 3. B 按钮逻辑修改：实现 Toggle (切换) 功能
+        # =========================================================
+        
+        # 检测【上升沿】 (Rising Edge)：当前是 True，上一帧是 False
+        # 这意味着用户“刚刚按下”了按钮
         if b_button_state and not self._prev_b_button_state:
-            # 只有在空闲时才能开始
+            
+            # 根据 Logger 当前的状态，决定是开始还是停止
             if self.data_logger.current_state == RecorderState.IDLE:
+                print("[Logic] B键按下 -> 检测到空闲 -> 开始录制")
                 self.data_logger.start_episode()
-
-        # 下降沿：结束并保存 Episode
-        elif not b_button_state and self._prev_b_button_state:
-            # 只有在非空闲时才能停止
-            if self.data_logger.current_state != RecorderState.IDLE:
+            else:
+                # 只要不是 IDLE (即 RECORDING 或 PAUSED)，按一下就停止并保存
+                print("[Logic] B键按下 -> 检测到录制中 -> 停止保存")
                 self.data_logger.stop_episode()
         
         self._prev_b_button_state = b_button_state
@@ -498,11 +607,11 @@ class AllRobotTeleopController(RobotTeleopController):
         """专用线程：监控用户输入并指挥 Logger"""
         print(f"{TerminalColor.OKGREEN}Data logging logic thread started...{TerminalColor.ENDC}")
         while not stop_event.is_set():
-            start_time = time.time()
+            start_time = time.perf_counter()
             
             self._handle_logging_logic()
 
-            elapsed_time = time.time() - start_time
+            elapsed_time = time.perf_counter() - start_time
             sleep_time = (1.0 / self.control_rate_hz) - elapsed_time
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -555,25 +664,22 @@ class AllRobotTeleopController(RobotTeleopController):
 
         # 2. 启动日志相关线程 (如果启用)
         if self.enable_log_data and self.data_logger is not None:
-            if self.is_connected:
-                print(f"[Logger] {TerminalColor.OKGREEN}Logger线程已启动.{TerminalColor.ENDC}")
-                # (A) 逻辑控制线程 (单独线程，处理按键，避免阻塞控制)
-                log_thread = threading.Thread(
-                    name="_data_logging_thread",
-                    target=self._data_logging_thread,
-                    args=(self._stop_event,),
-                )
-                threads.append(log_thread)
+            print(f"[Logger] {TerminalColor.OKGREEN}Logger线程已启动.{TerminalColor.ENDC}")
+            # (A) 逻辑控制线程 (单独线程，处理按键，避免阻塞控制)
+            log_thread = threading.Thread(
+                name="_data_logging_thread",
+                target=self._data_logging_thread,
+                args=(self._stop_event,),
+            )
+            threads.append(log_thread)
 
-                # (B) ROS Spin 线程 (必须保留，用于数据接收)
-                log_spin_thread = threading.Thread(
-                    name="_logger_spin_thread",
-                    target=self._spin_logger_node,
-                    args=(self._stop_event,),
-                )
-                threads.append(log_spin_thread)
-            else:
-                print(f"[Logger] {TerminalColor.WARNING}Logger线程未启动，因为机器人未连接.{TerminalColor.ENDC}")
+            # (B) ROS Spin 线程 (必须保留，用于数据接收)
+            log_spin_thread = threading.Thread(
+                name="_logger_spin_thread",
+                target=self._spin_logger_node,
+                args=(self._stop_event,),
+            )
+            threads.append(log_spin_thread)
 
         # 3. 设置守护并运行
         for t in threads:
@@ -587,7 +693,7 @@ class AllRobotTeleopController(RobotTeleopController):
                 if not all_threads_alive:
                     print(f"{TerminalColor.FAIL}A thread has died. Shutting down.{TerminalColor.ENDC}")
                     break
-                time.sleep(0.1)
+                time.sleep(0.2)
         except KeyboardInterrupt:
             print("\nKeyboard interrupt received.")
         finally:

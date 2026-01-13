@@ -6,9 +6,8 @@ import numpy as np
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Header
 from rm_ros_interfaces.msg import Jointpos, Movej
-from my_interfaces.msg import HeaderFloat32
+from my_interfaces.msg import HeaderFloat32,JointPosAndVel
 from geometry_msgs.msg import PoseStamped
-from geometry_msgs.msg import Twist
 
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
@@ -58,7 +57,7 @@ class RM65Controller(Node):
         self.pub = self.create_publisher(Jointpos, f"{arm_side}/rm_driver/movej_canfd_cmd", qos)
         self.pub_movej = self.create_publisher(Movej, f"{arm_side}/rm_driver/movej_cmd", qos)
         self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target_pose", qos)
-        self.pub_dq = self.create_publisher(Jointpos, f"{arm_side}/dq_target", qos)
+        self.pub_dq = self.create_publisher(JointPosAndVel, f"{arm_side}/dq_target", qos)
         
         self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/gripper_cmd", qos)
           
@@ -80,7 +79,6 @@ class RM65Controller(Node):
         self.q_des = None
         self.dq_des = None
         
-        self.dq_msg = Jointpos()
 
         self.ik_target = {"pos":None, "quat":None}
         self.ik_target_msg = PoseStamped()
@@ -97,6 +95,8 @@ class RM65Controller(Node):
         self.gripper_ctrl_msg = HeaderFloat32()
         self.gripper_ctrl_msg.header=Header()
         
+        self.joint_vel_msg=JointPosAndVel()
+        self.joint_vel_msg.header=Header()
 
         
         if self.arm_side == "right_arm":
@@ -188,23 +188,43 @@ class RM65Controller(Node):
         self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][2]
         self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][3]
         
-        if self.dq_des is not None:
-            self.dq_msg.joint=self.dq_des
-            self.dq_msg.header.stamp=self.arm_ctrl_msg.header.stamp
-            self.pub_dq.publish(self.dq_msg)
-        
         self.pub.publish(self.arm_ctrl_msg)
+        self.pub_ik_target.publish(self.ik_target_msg)
+        
+    def dq_publish_arm_control(self):
+        """
+        Publishes arm control messages.
+        """
+        if self.q_des is None or self.ik_target["pos"] is None or self.ik_target["quat"] is None:
+            return
+
+        self.ik_target_msg.header.stamp=self.joint_vel_msg.header.stamp= self.get_clock().now().to_msg()
+        self.joint_vel_msg.joint=self.q_des
+        if self.dq_des is not None:
+            self.joint_vel_msg.joint_vel=self.dq_des
+
+        self.ik_target_msg.pose.position.x=self.ik_target["pos"][0]
+        self.ik_target_msg.pose.position.y=self.ik_target["pos"][1]
+        self.ik_target_msg.pose.position.z=self.ik_target["pos"][2]
+        self.ik_target_msg.pose.orientation.x=self.ik_target["quat"][0]
+        self.ik_target_msg.pose.orientation.y=self.ik_target["quat"][1]
+        self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][2]
+        self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][3]
+        
+
+        self.pub_dq.publish(self.joint_vel_msg)
         self.pub_ik_target.publish(self.ik_target_msg)
 
     def publish_gripper_control(self):
         """
         Publishes gripper control messages.
         """
-        if self.q_des_gripper is None:
+        if not self.q_des_gripper:
             return
+        
         self.gripper_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
         self.gripper_ctrl_msg.header.frame_id = "gripper_link"
-        self.gripper_ctrl_msg.data = self.q_des_gripper[0]
+        self.gripper_ctrl_msg.data = float(self.q_des_gripper[0])
 
         self.gripper_pub.publish(self.gripper_ctrl_msg)
 

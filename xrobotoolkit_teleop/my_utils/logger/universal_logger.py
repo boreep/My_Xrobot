@@ -388,7 +388,7 @@ class UniversalDataLogger(Node):
     def update_active_status(self, is_active: bool):
         self.is_active = is_active
         status_str = "ACTIVATED" if is_active else "DEACTIVATED"
-        self.get_logger().info(f"[System] {status_str}")
+        self.get_logger().debug(f"[System] {status_str}")
 
     # ==========================================
     #      核心：动态 HDF5 保存

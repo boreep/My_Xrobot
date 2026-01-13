@@ -35,11 +35,11 @@ def main(
         control_rate_hz=50,
         self_collision_avoidance_enabled=True,
         enable_log_data=True,
-        logger_config_path = "config/default_dataset_config.yaml",
+        logger_config_path = "config/sim_robot.yaml",
         
     )
 
-    kinetic_energy_task = controller.solver.add_kinetic_energy_regularization_task(1e-6)
+    controller.solver.add_kinetic_energy_regularization_task(1e-6)
     
 
     # 启动控制器运行

@@ -200,7 +200,7 @@ class BaseController(abc.ABC):
             
 
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0) 
-            manipulability.configure("manipulability", "soft", 1e-2)    #奇异性约束
+            manipulability.configure("manipulability", "soft", 1e-1)    #奇异性约束
 
             if "velocity_limits" in config:
                 # 1. 遍历并设置每一个关节的限速

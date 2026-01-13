@@ -24,7 +24,7 @@ from sensor_msgs_py import point_cloud2 as pc2 # ROS2 里的标准点云处理�
 # === 消息类型导入 ===
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
-from my_interfaces.msg import HeaderFloat32 
+from my_interfaces.msg import HeaderFloat32 , JointPosAndVel
 from rm_ros_interfaces.msg import Jointpos
 
 class RecorderState(Enum):
@@ -172,7 +172,7 @@ class UniversalDataLogger(Node):
         
         base_dir = config.get('base_dir', 'robot_dataset')
         task_name = config.get('task_name', 'default_task')
-        target_rate = config.get('sampling_rate', 25)
+        target_rate = config.get('sampling_rate', 20)
         self.target_rate = target_rate
 
         self.current_state = RecorderState.IDLE
@@ -206,6 +206,7 @@ class UniversalDataLogger(Node):
             "ik_target":   { "type": PoseStamped, "parser": self._parse_pose },
             "gripper_cmd":     { "type": HeaderFloat32, "parser": lambda msg: np.array([msg.data], dtype=np.float32) },
             "joint_state": { "type": JointState, "parser": lambda msg: np.array(msg.position, dtype=np.float32) },
+            "dq_target":    { "type": Jointpos, "parser": lambda msg: np.array(msg.joint, dtype=np.float32) },
             # 视觉相关 (对应 config 里的 keys)
             "image":       { "type": Image, "parser": self._parse_image },
             "point":       { "type": PointCloud2, "parser": self._parse_pointcloud }

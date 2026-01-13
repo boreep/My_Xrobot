@@ -233,7 +233,6 @@ class AllRobotTeleopController(RobotTeleopController):
         - 保留多臂状态隔离 (用于异常时的安全衰减)
         - SVD + 动态阻尼保证数值计算不炸
         """
-        
         # --------- 0. 多臂状态隔离初始化 ---------
         # 这里的 _dq_last 现在仅用于 "异常情况下的安全衰减兜底"
         # 正常运行时不再参与计算
@@ -276,6 +275,7 @@ class AllRobotTeleopController(RobotTeleopController):
         if np.allclose(v_cartesian, 0.0):
             # 更新缓存为0，用于衰减逻辑
             self._dq_last[arm_name] = np.zeros(6) if hasattr(self, "placo_arm_joint_slice") else np.zeros_like(v_cartesian) 
+            print(f"[Feedforward_Velocity] {TerminalColor.OKGREEN}零速度: {self._dq_last[arm_name]}{TerminalColor.ENDC}")
             return self._dq_last[arm_name]
         # -------------------------------------------------------------
 
@@ -284,7 +284,8 @@ class AllRobotTeleopController(RobotTeleopController):
             link_name = self.manipulator_config[arm_name]["link_name"]
             
             # 如果 placo 支持字符串直接查：
-            J = self.placo_robot.frame_jacobian(link_name)
+            J = self.placo_robot.frame_jacobian(link_name, "world")
+            # print(f"[DEBUG] J shape: {J.shape}")
 
             # ---------- 2. SVD 分解 (稳定性核心) ----------
             # full_matrices=False 牺牲微秒级精度换取速度
@@ -305,7 +306,16 @@ class AllRobotTeleopController(RobotTeleopController):
 
             # ---------- 5. 维度切片 ----------
             if hasattr(self, "placo_arm_joint_slice"):
-                dq_arm = dq_full[self.placo_arm_joint_slice[arm_name]]
+                # 1. 取出 _placo_setup 里存的切片 (这是针对 Position q 的)
+                #    例如 Right Arm: slice(13, 19)
+                q_slice = self.placo_arm_joint_slice[arm_name]
+                
+                # 2. 转换为针对 Velocity v 的切片 (整体 -1)
+                #    因为: Quaternion(4) vs AngularVel(3) -> 差 1 位
+                #    转换后: slice(12, 18) -> 完美对应 6 个关节速度
+                v_slice = slice(q_slice.start - 1, q_slice.stop - 1)
+                
+                dq_arm = dq_full[v_slice]
             else:
                 dq_arm = dq_full
 
@@ -319,6 +329,8 @@ class AllRobotTeleopController(RobotTeleopController):
             # ---------- 7. 更新缓存并直通返回 (无滤波) ----------
             # 我们记录它仅仅是为了万一下一帧炸了，能有个东西拿来衰减
             self._dq_last[arm_name] = dq_arm
+            # ---------- 9. 打印 IK 速度 ----------
+            print(f"[IK_Thread] {TerminalColor.OKGREEN}IK 速度: {dq_arm}{TerminalColor.ENDC}")
             
             return dq_arm
 
@@ -326,13 +338,18 @@ class AllRobotTeleopController(RobotTeleopController):
             # ---------- 8. 安全兜底 (Decay) ----------
             # 只有在数学计算崩溃（如完全奇异导致NaN）时才会走到这里
             # 策略：基于上一帧速度迅速衰减，而不是硬切断
+            import traceback
+            print(f"[IK_Thread] {TerminalColor.FAIL}严重错误: {e}{TerminalColor.ENDC}")
+            traceback.print_exc() # 打印详细的报错行数
             if self._dq_last.get(arm_name) is not None:
                 fallback = self._dq_last[arm_name] * 0.8 # 衰减快一点，尽快停下
                 if np.max(np.abs(fallback)) < 1e-4:
                     fallback = np.zeros_like(fallback)
                 self._dq_last[arm_name] = fallback
+                print(f"[IK_Thread] {TerminalColor.OKGREEN}警告: IK 计算失败，返回衰减速度: {fallback}{TerminalColor.ENDC}")
                 return fallback
             else:
+                print(f"[IK_Thread] {TerminalColor.OKGREEN}警告: IK 计算失败，返回零速度{TerminalColor.ENDC}")
                 return np.zeros(6)
     # ============================================================
     # 线程 1 (生产者): IK 计算线程 - 尽力而为，不负责定时
@@ -406,9 +423,9 @@ class AllRobotTeleopController(RobotTeleopController):
                 # 这样可以防止机器人为了“赶进度”而快速执行多次，导致动作瞬变
                 if sleep_duration < -period: 
                      # print(f"[IK_Thread] Loop running slow! Lag: {-sleep_duration:.4f}s")
-                    next_wake_time =  now# 重置基准，丢弃过去的时间
+                    next_wake_time =  now   # 重置基准，丢弃过去的时间
         
-# ============================================================
+    # ============================================================
     # 线程 2 (消费者): 发送控制线程 - 绝对定时 50Hz
     # ============================================================
     def _control_thread(self, stop_event: threading.Event):
@@ -421,7 +438,6 @@ class AllRobotTeleopController(RobotTeleopController):
         period = 1.0 / self.control_rate_hz  # 0.02s
         next_wake_time = time.perf_counter() # 使用高精度计时器
         
-        axis_btn_state = {}
         
         while not stop_event.is_set():
             # 1. 计算下一次唤醒时间 (累计误差消除法)
@@ -517,12 +533,13 @@ class AllRobotTeleopController(RobotTeleopController):
             # 1. 处理机械臂运动
             # 如果 IK 线程算出的是 None (未激活)，则不发送新的 q_des
             # Controller 会保持上一次的位置 (或者您可以显式发送当前位置)
+            controller.q_des = arm_data['q_des']
             if arm_data['q_des'] is not None:
-                controller.q_des = arm_data['q_des']
                 controller.dq_des = arm_data['dq_des']
                 # 只有激活时才发布手臂控制
                 if self.active.get(arm_name, False):
                     controller.publish_arm_control() # 发布 ROS 话题
+                    controller.publish_dq_target()
             
             # 2. 处理夹爪
             controller.q_des_gripper = [

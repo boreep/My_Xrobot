@@ -34,16 +34,16 @@ def main(
         visualize_placo=True,
         control_rate_hz=50,
         self_collision_avoidance_enabled=True,
-        enable_log_data=True,
+        enable_log_data=False,
         logger_config_path = "config/sim_robot.yaml",
         
     )
 
-    controller.solver.add_kinetic_energy_regularization_task(1e-6)
+    controller.solver.add_kinetic_energy_regularization_task(1e-5)
     
 
     # 启动控制器运行
-    controller.init_arm()
+    # controller.init_arm()
     controller.run()
 
 

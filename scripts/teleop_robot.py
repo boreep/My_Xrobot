@@ -40,7 +40,12 @@ def main(
     )
 
     controller.solver.add_kinetic_energy_regularization_task(1e-5)
-    
+    joint_names = list(controller.placo_robot.joint_names())
+
+    # 现在可以直接打印看内容了
+    print(joint_names)
+
+
 
     # 启动控制器运行
     # controller.init_arm()

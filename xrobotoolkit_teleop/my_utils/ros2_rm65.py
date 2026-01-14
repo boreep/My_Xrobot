@@ -2,12 +2,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 import numpy as np
+import os
 
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Header
 from rm_ros_interfaces.msg import Jointpos, Movej
 from my_interfaces.msg import HeaderFloat32
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped,Twist
 
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
@@ -29,6 +30,59 @@ VELOCITY_SCALE_FACTOR = 0.6  # 当前设置为 50% 性能
 ARM_VELOCITY_LIMITS = {
     joint: limit * VELOCITY_SCALE_FACTOR 
     for joint, limit in HARDWARE_MAX_VELOCITY.items()
+}
+
+from xrobotoolkit_teleop.utils.path_utils import ASSET_PATH
+# Default paths and configurations for R1 Lite dual arm
+DEFAULT_ALLROBOT_URDF_PATH = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf")
+DEFAULT_SCALE_FACTOR = 1.13
+CONTROLLER_DEADZONE = 0.1
+
+
+def add_prefix_to_velocity_limits(prefix: str):
+    return {f"{prefix}_{k}": v for k, v in ARM_VELOCITY_LIMITS.items()}
+
+# R1 Lite always has both arms - no single arm configuration needed
+DEFAULT_MANIPULATOR_CONFIG = {
+    "right_arm": {
+        "link_name": "right_ee_link",         # 末端执行器链接名称
+        "pose_source": "right_controller",   # 使用右手控制器控制
+        "control_trigger": "right_grip",     # 右手握持键触发控制
+        # "control_mode": "position",       # 可选位置控制或全位姿控制
+        "velocity_limits": add_prefix_to_velocity_limits("right"), 
+        "gripper_config": {
+            "type": "parallel",
+            "gripper_trigger": "right_trigger",
+            "joint_names": [
+                "right_gripper",
+            ],
+            "open_pos": [
+                0.0,
+            ],
+            "close_pos": [
+                1.0,
+            ],
+        },
+    },
+    "left_arm": {
+        "link_name": "left_ee_link",
+        "pose_source": "left_controller",
+        "control_trigger": "left_grip",
+        "velocity_limits": add_prefix_to_velocity_limits("left"),
+        "gripper_config": {
+            "type": "parallel",
+            "gripper_trigger": "left_trigger",
+            "joint_names": [
+                "left_gripper",
+            ],
+            "open_pos": [
+                0.0,
+            ],
+            "close_pos": [
+                1.0,
+            ],
+        },
+    },
 }
 
 class RM65Controller(Node):
@@ -99,6 +153,11 @@ class RM65Controller(Node):
             self.init_pos=RIGHT_INITIAL_JOINT_DEG.tolist()
         elif self.arm_side == "left_arm":
             self.init_pos=LEFT_INITIAL_JOINT_DEG.tolist() 
+            
+        #!!!DEBUG！！！后续可删除
+        self.ik_vel_des = None
+        self.ik_target_vel_msg=Twist()
+        self.pub_ik_vel=self.create_publisher(Twist,f"{arm_side}/ik_target_vel",qos)
         
         
         # Create a timer to run the control loop
@@ -141,11 +200,11 @@ class RM65Controller(Node):
             self.movej_msg.joint = [0.0] * 6
             self.movej_msg.trajectory_connect = 1
             self.pub_movej.publish(self.movej_msg)
-        
+    
         self.movej_msg.joint = self.init_pos
         self.movej_msg.trajectory_connect = 0
         self.pub_movej.publish(self.movej_msg)
-        
+    
         # 5. 完成
         self.get_logger().info(f"{self.arm_side} 初始化运动指令发送完毕")
     
@@ -161,7 +220,7 @@ class RM65Controller(Node):
             # self.qvel_gripper = [msg.velocity[6]]
         if self.q_des is None:
             self.q_des = self.qpos
-            
+        
         # ROS2 Time conversion
         self.timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
@@ -179,10 +238,10 @@ class RM65Controller(Node):
         self.ik_target_msg.pose.position.x=self.ik_target["pos"][0]
         self.ik_target_msg.pose.position.y=self.ik_target["pos"][1]
         self.ik_target_msg.pose.position.z=self.ik_target["pos"][2]
-        self.ik_target_msg.pose.orientation.x=self.ik_target["quat"][0]
-        self.ik_target_msg.pose.orientation.y=self.ik_target["quat"][1]
-        self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][2]
-        self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][3]
+        self.ik_target_msg.pose.orientation.x=self.ik_target["quat"][1]
+        self.ik_target_msg.pose.orientation.y=self.ik_target["quat"][2]
+        self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][3]
+        self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][0]
         
         self.pub.publish(self.arm_ctrl_msg)
         self.pub_ik_target.publish(self.ik_target_msg)
@@ -199,6 +258,22 @@ class RM65Controller(Node):
         self.joint_vel_msg.joint=self.dq_des
         
         self.pub_dq.publish(self.joint_vel_msg)
+        
+    def publish_ik_vel_target(self):
+        """
+        Publishes ik_vel target messages.
+        """
+        if self.ik_vel_des is None:
+            return
+        
+        self.ik_target_vel_msg.linear.x=self.ik_vel_des[0]
+        self.ik_target_vel_msg.linear.y=self.ik_vel_des[1]
+        self.ik_target_vel_msg.linear.z=self.ik_vel_des[2]
+        self.ik_target_vel_msg.angular.x=self.ik_vel_des[3]
+        self.ik_target_vel_msg.angular.y=self.ik_vel_des[4]
+        self.ik_target_vel_msg.angular.z=self.ik_vel_des[5]
+        
+        self.pub_ik_vel.publish(self.ik_target_vel_msg)
 
     def publish_gripper_control(self):
         """

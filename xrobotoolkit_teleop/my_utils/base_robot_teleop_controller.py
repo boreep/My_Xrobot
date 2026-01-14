@@ -85,7 +85,7 @@ class RobotTeleopController(BaseController, ABC):
         pass
 
     def _get_link_pose(self, link_name: str):
-        """Gets the current world pose for a given link name from Placo."""
+        """Gets the current world pose for a given link name from Placo. ,w,x,y,z"""
         T_world_link = self.placo_robot.get_T_world_frame(link_name)
         pos = T_world_link[:3, 3]
         quat = tf.quaternion_from_matrix(T_world_link)

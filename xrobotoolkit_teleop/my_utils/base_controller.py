@@ -126,20 +126,22 @@ class BaseController(abc.ABC):
     
     def _process_xr_velocity(self, xr_vel, src_name):
         """
-        处理 XR 速度数据（线速度和角速度）
-        :param xr_vel: SDK 返回的速度 [vx, vy, vz, wx, wy, wz]
-        :param src_name: 数据源名称
-        :return: 处理后的机器人线速度, 处理后的机器人角速度
+        处理 XR 速度数据
+        逻辑与 _process_xr_pose 保持一致：
+        Unity 发送的是 Tracking Space 下的数据 -> 我们将其转换到 Robot Base Frame 下
         """
-        # 分割输入：前3个是线速度，后3个是角速度
-        linear_vel = np.array(xr_vel[:3])
-        angular_vel = np.array(xr_vel[3:])
+        # 1. 分割输入
+        # C# 发送顺序: return (worldVel, worldAngVel);
+        linear_vel_tracking = np.array(xr_vel[:3])   # Tracking Frame 下的线速度
+        angular_vel_tracking = np.array(xr_vel[3:])  # Tracking Frame 下的角速度
         
-        # 坐标系转换与缩放
-        robot_linear = self.R_headset_world @ linear_vel * self.scale_factor
-        robot_angular = self.R_headset_world @ angular_vel
+        # 线速度：需要旋转 + 缩放 (scale_factor)
+        robot_linear = (self.R_headset_world @ linear_vel_tracking) * self.scale_factor
         
-        # 存储组合数据
+        # 角速度：只需要旋转 (不需要缩放，因为角速度单位是 rad/s，与空间尺度无关)
+        robot_angular = self.R_headset_world @ angular_vel_tracking*(-1)
+        
+        # 3. 存储组合数据
         self.controller_velocity[src_name] = np.concatenate((robot_linear, robot_angular))
         
         return robot_linear, robot_angular
@@ -147,13 +149,13 @@ class BaseController(abc.ABC):
     def _placo_setup(self):
         """设置Placo逆运动学求解器"""
         self.placo_robot = placo.RobotWrapper(self.robot_urdf_path)
-        print("[placo_setup] Joint names in the Placo model:")
-        for joint_name in self.placo_robot.model.names:
-            print(f"  {joint_name}")
+        # print("[placo_setup] Joint names in the Placo model:")
+        # for joint_name in self.placo_robot.model.names:
+        #     print(f"  {joint_name}")
 
         self.solver = placo.KinematicsSolver(self.placo_robot)
         self.solver.dt = self.dt
-        
+
         # 设置初始配置
         if self.q_init is not None:
             if self.floating_base:
@@ -167,7 +169,7 @@ class BaseController(abc.ABC):
             self.placo_robot.state.q[:7] = np.array([0, 0, 0, 0, 0, 0, 1])
 
         self.placo_robot.update_kinematics()
-        
+
         if self.enable_self_collision_avoidance:
             avoid_self_collisions = self.solver.add_avoid_self_collisions_constraint()
             avoid_self_collisions.configure("avoid_self_collisions", "hard")
@@ -176,15 +178,15 @@ class BaseController(abc.ABC):
             print("[placo_setup] Self-collision avoidance enabled in Placo solver.")
         else:
             print("[placo_setup] Self-collision avoidance is NOT enabled.")
-            
+
         # 为每个操作器设置末端执行器任务
         for name, config in self.manipulator_config.items():
             # 获取控制模式（默认为"pose"）
             control_mode = config.get("control_mode", "pose")
             self.effector_control_mode[name] = control_mode
-            
+
             ee_xyz, ee_quat = self._get_link_pose(config["link_name"])
-            
+
             if control_mode == "position":
                 # 位置控制模式
                 self.effector_task[name] = self.solver.add_position_task(config["link_name"], ee_xyz)
@@ -197,7 +199,6 @@ class BaseController(abc.ABC):
                 self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
                 print(f"[placo_setup] Created pose task for {name} -> {config['link_name']}")
                 self.effector_task[name].configure(name, "soft", 1.0, 0.1)
-            
 
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0) 
             manipulability.configure("manipulability", "soft", 1e-1)    #奇异性约束
@@ -213,8 +214,7 @@ class BaseController(abc.ABC):
                 # 2. 显式开启速度限制功能
                 self.solver.enable_velocity_limits(True)
                 print(f"[placo_setup] Velocity limits enabled for joints in {name}.")
-                
-    
+
             # 设置运动追踪器任务（如果配置了）
             if "motion_tracker" in config:
                 tracker_config = config["motion_tracker"]
@@ -242,9 +242,10 @@ class BaseController(abc.ABC):
                 xr_pose = self.xr_client.get_pose_by_name(config["pose_source"])
                 if self.with_vel:
                     xr_velicity =self.xr_client.get_velocity_by_name(config["pose_source"])
-                    self._process_xr_velocity(xr_velicity, src_name)
+                    # self._process_xr_velocity(xr_velicity, src_name)
+                    self._process_xr_velocity(xr_velicity, src_name=src_name)
                 
-                delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name)
+                delta_xyz, delta_rot = self._process_xr_pose(xr_pose, src_name=src_name)
                 
                 # 根据控制模式更新目标任务
                 if self.effector_control_mode[src_name] == "position":
@@ -258,15 +259,11 @@ class BaseController(abc.ABC):
                         self.ref_ee_quat[src_name],
                         delta_xyz,
                         delta_rot,
-                    )
+                    ) #wxyz
                     target_pose = tf.quaternion_matrix(target_quat)
                     target_pose[:3, 3] = target_xyz
                     self.effector_task[src_name].T_world_frame = target_pose
                     
-                self.ik_targets[src_name] = {
-                "pos": target_xyz.copy(),
-                "quat": np.array(target_quat, copy=True),
-            }
             else: #松开触发按钮后，下一次再按下时候，会以当前状态为新起点，避免跳变
                 if self.ref_ee_xyz[src_name] is not None:
                     print(f"{src_name} is deactivated.")

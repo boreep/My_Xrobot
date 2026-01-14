@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from rm_ros_interfaces.msg import Jointpos
 
+
 # ================= 配置区域 =================
 MAX_SAMPLES = 400  # 采集多少帧 (50Hz * 8s = 400)
 # ===========================================

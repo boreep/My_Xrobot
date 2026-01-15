@@ -25,7 +25,7 @@ HARDWARE_MAX_VELOCITY = {
     "joint_5": 3.927,
     "joint_6": 3.927,
 }
-VELOCITY_SCALE_FACTOR = 0.6  # 当前设置为 50% 性能
+VELOCITY_SCALE_FACTOR = 0.5  # 当前设置为 50% 性能
 
 ARM_VELOCITY_LIMITS = {
     joint: limit * VELOCITY_SCALE_FACTOR 

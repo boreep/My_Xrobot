@@ -37,8 +37,9 @@ class VelocityVerifier(Node):
         if not self.is_recording:
             return
 
-        # 获取时间戳 (转为秒)
-        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        # === 使用系统时间，而不是 header.stamp ===
+        now = self.get_clock().now()
+        t = now.nanoseconds * 1e-9
 
         # 记录起始时间以便归零
         if self.start_time is None:
@@ -47,7 +48,7 @@ class VelocityVerifier(Node):
         self.pose_data.append([
             t,
             msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-            msg.pose.orientation.x, msg.pose.orientation.y, 
+            msg.pose.orientation.x, msg.pose.orientation.y,
             msg.pose.orientation.z, msg.pose.orientation.w
         ])
 

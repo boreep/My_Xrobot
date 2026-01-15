@@ -198,10 +198,10 @@ class BaseController(abc.ABC):
                 ee_target[:3, 3] = ee_xyz
                 self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
                 print(f"[placo_setup] Created pose task for {name} -> {config['link_name']}")
-                self.effector_task[name].configure(name, "soft", 1.0, 0.1)
+                self.effector_task[name].configure(name, "soft", 1.0, 0.05)
 
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0) 
-            manipulability.configure("manipulability", "soft", 1e-1)    #奇异性约束
+            manipulability.configure("manipulability", "soft", 0.1)    #奇异性约束
 
             if "velocity_limits" in config:
                 # 1. 遍历并设置每一个关节的限速
@@ -263,12 +263,18 @@ class BaseController(abc.ABC):
                     target_pose = tf.quaternion_matrix(target_quat)
                     target_pose[:3, 3] = target_xyz
                     self.effector_task[src_name].T_world_frame = target_pose
+                                    
+                self.ik_targets[src_name] = {
+                    "pos": np.array(target_xyz),
+                    "quat": np.array(target_quat),#w,x,y,z
+                }
                     
             else: #松开触发按钮后，下一次再按下时候，会以当前状态为新起点，避免跳变
                 if self.ref_ee_xyz[src_name] is not None:
                     print(f"{src_name} is deactivated.")
                     self.ref_ee_xyz[src_name] = None
                     self.ref_controller_xyz[src_name] = None
+
 
 
         # 处理运动追踪器数据

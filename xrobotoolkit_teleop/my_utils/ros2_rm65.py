@@ -8,11 +8,12 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Header
 from rm_ros_interfaces.msg import Jointpos, Movej
 from my_interfaces.msg import HeaderFloat32
-from geometry_msgs.msg import PoseStamped,Twist
+from geometry_msgs.msg import Pose
 
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
-RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, 0.0]))
+# RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, -120]))
+RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([110, 45, 45, 0, 0, 0]))
 LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
 # RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([0, 0, 0, 0, 0, 0.0]))
 
@@ -106,7 +107,7 @@ class RM65Controller(Node):
 
         self.pub = self.create_publisher(Jointpos, f"{arm_side}/rm_driver/movej_canfd_cmd", qos)
         self.pub_movej = self.create_publisher(Movej, f"{arm_side}/rm_driver/movej_cmd", qos)
-        self.pub_ik_target = self.create_publisher(PoseStamped, f"{arm_side}/ik_target_pose", qos)
+        self.pub_ik_target = self.create_publisher(Pose, f"{arm_side}/ik_target_pose", qos)
         self.pub_dq = self.create_publisher(Jointpos, f"{arm_side}/dq_target", qos)
         
         self.gripper_pub = self.create_publisher(HeaderFloat32, f"{arm_side}/gripper_cmd", qos)
@@ -131,10 +132,8 @@ class RM65Controller(Node):
         
 
         self.ik_target = {"pos":None, "quat":None}
-        self.ik_target_msg = PoseStamped()
-        self.ik_target_msg.header=Header()
-        self.ik_target_msg.header.frame_id = "ee_link"
-        
+        self.ik_target_msg = Pose()
+
         self.arm_ctrl_msg = Jointpos()
         self.arm_ctrl_msg.header = Header()
         self.arm_ctrl_msg.follow= follow_mode
@@ -154,14 +153,6 @@ class RM65Controller(Node):
         elif self.arm_side == "left_arm":
             self.init_pos=LEFT_INITIAL_JOINT_DEG.tolist() 
             
-        #!!!DEBUG！！！后续可删除
-        self.ik_vel_des = None
-        self.ik_target_vel_msg=Twist()
-        self.pub_ik_vel=self.create_publisher(Twist,f"{arm_side}/ik_target_vel",qos)
-        
-        
-        # Create a timer to run the control loop
-        # self.timer = self.create_timer(1.0 / 20, self.control_loop)
 
     def init_arm_cmd(self):
 
@@ -173,7 +164,7 @@ class RM65Controller(Node):
 
         # 2. 准备指令
         self.movej_msg = Movej()
-        self.movej_msg.speed = 20
+        self.movej_msg.speed = 15
         self.movej_msg.dof = 6
         self.movej_msg.block = True 
 
@@ -182,9 +173,9 @@ class RM65Controller(Node):
         
         if self.qpos is not None:
             curr_arr = np.array(self.qpos)
-            # 直接计算距离
-            dist_to_zero = np.linalg.norm(curr_arr - np.zeros(6))
-            dist_to_init = np.linalg.norm(curr_arr - np.array(self.init_pos))
+            # 修改：仅切片取前三个关节的数据进行计算
+            dist_to_zero = np.linalg.norm(curr_arr[:3] - np.zeros(3))
+            dist_to_init = np.linalg.norm(curr_arr[:3] - np.array(self.init_pos)[:3])
             
             # 仅输出最终决策
             if dist_to_init < dist_to_zero:
@@ -228,20 +219,22 @@ class RM65Controller(Node):
         """
         Publishes arm control messages.
         """
-        if self.q_des is None or self.ik_target["pos"] is None or self.ik_target["quat"] is None:
+        if  self.q_des is None or self.ik_target["pos"] is None or self.ik_target["quat"] is None:
             return
 
-        self.ik_target_msg.header.stamp=self.arm_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
+
         self.arm_ctrl_msg.header.frame_id = "rm_joint"
+        self.arm_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
         self.arm_ctrl_msg.joint=self.q_des
+        self.arm_ctrl_msg.follow=False
         
-        self.ik_target_msg.pose.position.x=self.ik_target["pos"][0]
-        self.ik_target_msg.pose.position.y=self.ik_target["pos"][1]
-        self.ik_target_msg.pose.position.z=self.ik_target["pos"][2]
-        self.ik_target_msg.pose.orientation.x=self.ik_target["quat"][1]
-        self.ik_target_msg.pose.orientation.y=self.ik_target["quat"][2]
-        self.ik_target_msg.pose.orientation.z=self.ik_target["quat"][3]
-        self.ik_target_msg.pose.orientation.w=self.ik_target["quat"][0]
+        self.ik_target_msg.position.x=self.ik_target["pos"][0]
+        self.ik_target_msg.position.y=self.ik_target["pos"][1]
+        self.ik_target_msg.position.z=self.ik_target["pos"][2]
+        self.ik_target_msg.orientation.x=self.ik_target["quat"][1]
+        self.ik_target_msg.orientation.y=self.ik_target["quat"][2]
+        self.ik_target_msg.orientation.z=self.ik_target["quat"][3]
+        self.ik_target_msg.orientation.w=self.ik_target["quat"][0]
         
         self.pub.publish(self.arm_ctrl_msg)
         self.pub_ik_target.publish(self.ik_target_msg)
@@ -254,26 +247,26 @@ class RM65Controller(Node):
         if self.dq_des is None:
             return
         
-        self.joint_vel_msg.header.stamp = self.ik_target_msg.header.stamp
+        self.joint_vel_msg.header.stamp =self.arm_ctrl_msg.header.stamp
         self.joint_vel_msg.joint=self.dq_des
         
         self.pub_dq.publish(self.joint_vel_msg)
         
-    def publish_ik_vel_target(self):
-        """
-        Publishes ik_vel target messages.
-        """
-        if self.ik_vel_des is None:
-            return
+    # def publish_ik_vel_target(self):
+    #     """
+    #     Publishes ik_vel target messages.
+    #     """
+    #     if self.ik_vel_des is None:
+    #         return
         
-        self.ik_target_vel_msg.linear.x=self.ik_vel_des[0]
-        self.ik_target_vel_msg.linear.y=self.ik_vel_des[1]
-        self.ik_target_vel_msg.linear.z=self.ik_vel_des[2]
-        self.ik_target_vel_msg.angular.x=self.ik_vel_des[3]
-        self.ik_target_vel_msg.angular.y=self.ik_vel_des[4]
-        self.ik_target_vel_msg.angular.z=self.ik_vel_des[5]
+    #     self.ik_target_vel_msg.linear.x=self.ik_vel_des[0]
+    #     self.ik_target_vel_msg.linear.y=self.ik_vel_des[1]
+    #     self.ik_target_vel_msg.linear.z=self.ik_vel_des[2]
+    #     self.ik_target_vel_msg.angular.x=self.ik_vel_des[3]
+    #     self.ik_target_vel_msg.angular.y=self.ik_vel_des[4]
+    #     self.ik_target_vel_msg.angular.z=self.ik_vel_des[5]
         
-        self.pub_ik_vel.publish(self.ik_target_vel_msg)
+    #     self.pub_ik_vel.publish(self.ik_target_vel_msg)
 
     def publish_gripper_control(self):
         """
@@ -282,7 +275,7 @@ class RM65Controller(Node):
         if not self.q_des_gripper:
             return
         
-        self.gripper_ctrl_msg.header.stamp = self.get_clock().now().to_msg()
+        self.gripper_ctrl_msg.header.stamp = self.arm_ctrl_msg.header.stamp
         self.gripper_ctrl_msg.header.frame_id = "gripper_link"
         self.gripper_ctrl_msg.data = float(self.q_des_gripper[0])
 

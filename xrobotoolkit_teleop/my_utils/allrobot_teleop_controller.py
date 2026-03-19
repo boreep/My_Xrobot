@@ -177,19 +177,20 @@ class AllRobotTeleopController(RobotTeleopController):
             print(f"ROS2 Executor 线程已停止。")
             
     def wait_for_hardware(self, timeout_sec=10.0):
-            """供外部调用：阻塞等待直到收到硬件数据"""
-            print(f"[Hardware_Connect] 正在等待机械臂心跳数据...")
-            start_wait = time.perf_counter()
+        """供外部调用：阻塞等待直到收到硬件数据"""
+        print(f"[Hardware_Connect] 正在等待机械臂心跳数据...")
+        start_wait = time.perf_counter()
 
-            while not all(c.timestamp > 0 for c in self.arm_controllers.values()):
-                if time.perf_counter() - start_wait > timeout_sec:
-                    # 这里可以选择抛出异常，或者返回 False 让外部决定怎么处理
-                    print(f"[Hardware_Connect] {TerminalColor.WARNING}警告：{timeout_sec}秒内未收到机械臂数据！{TerminalColor.ENDC}")
-                    return False
-                time.sleep(0.2) # 这里的 sleep 安全，因为 ROS spin 是在独立线程跑的
-                
-            print(f"[Hardware_Connect] {TerminalColor.OKGREEN}成功：所有机械臂已连接！{TerminalColor.ENDC}")
-            return True
+        while not any(c.timestamp > 0 for c in self.arm_controllers.values()):
+            if time.perf_counter() - start_wait > timeout_sec:
+                # 这里可以选择抛出异常，或者返回 False 让外部决定怎么处理
+                print(f"[Hardware_Connect] {TerminalColor.WARNING}警告：{timeout_sec}秒内未收到机械臂数据！{TerminalColor.ENDC}")
+                return False
+            time.sleep(0.2) # 这里的 sleep 安全，因为 ROS spin 是在独立线程跑的
+            
+        print(f"[Hardware_Connect] {TerminalColor.OKGREEN}成功：至少有一个机械臂已连接！{TerminalColor.ENDC}")
+        return True
+
 
     def init_arm(self):
         """发送初始化位置"""
@@ -202,15 +203,32 @@ class AllRobotTeleopController(RobotTeleopController):
             print(f"[Init_Arm] {TerminalColor.WARNING}警告：机械臂连接失败！ 不进行robot_state_update{TerminalColor.ENDC}")
             print(f"[Init_Arm] {TerminalColor.HEADER}进入placo仿真模式{TerminalColor.ENDC}")
             
+    # def _update_robot_state(self):
+    #     """Reads current joint states from both arm controllers and updates Placo."""
+    #     if self.is_connected:
+    #         for arm_name, controller in self.arm_controllers.items():
+    #             if controller.qpos is None:
+    #                 print(f"[Pre_IK] {TerminalColor.WARNING}警告：{arm_name} 机械臂未读取到state数据!{TerminalColor.ENDC}")
+    #                 time.sleep(0.5)
+    #                 continue
+    #             self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
+    
     def _update_robot_state(self):
         """Reads current joint states from both arm controllers and updates Placo."""
         if self.is_connected:
             for arm_name, controller in self.arm_controllers.items():
                 if controller.qpos is None:
-                    print(f"[Pre_IK] {TerminalColor.WARNING}警告：{arm_name} 机械臂未读取到state数据!{TerminalColor.ENDC}")
-                    time.sleep(0.5)
+                    # 仅在首次检测到缺失状态时输出警告
+                    if not hasattr(self, '_logged_missing_state'):
+                        self._logged_missing_state = set()
+                    
+                    if arm_name not in self._logged_missing_state:
+                        print(f"[Pre_IK] {TerminalColor.WARNING}警告：{arm_name} 机械臂未读取到state数据，该臂将不参与IK计算{TerminalColor.ENDC}")
+                        self._logged_missing_state.add(arm_name)
                     continue
+                
                 self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]] = controller.qpos.copy()
+
 
     def _updtae_ik_target_msg(self):
 
@@ -241,7 +259,7 @@ class AllRobotTeleopController(RobotTeleopController):
             self._update_gripper_target() # 更新夹爪目标
             self._pre_ik_update()         # 更新 state
             self._update_ik()             # 核心 IK 求解 (耗时波动点)
-            # self._updtae_ik_target_msg()      # 更新IK目标
+            self._updtae_ik_target_msg()      # 更新IK目标
 
             # 3. 准备要提交的数据包
             new_commands = {}
@@ -251,8 +269,8 @@ class AllRobotTeleopController(RobotTeleopController):
                     # 获取目标关节角度
                     q_des = self.placo_robot.state.q[self.placo_arm_joint_slice[arm_name]].copy().tolist()
 
-                    dq_des = self.get_all_joint_velocities(arm_name).tolist() # pyright: ignore[reportOptionalMemberAccess]
-
+                    # dq_des = self.get_all_joint_velocities(arm_name).tolist() # pyright: ignore[reportOptionalMemberAccess]
+                    dq_des = [0.0] * 6
                     # 计算前馈速度
                     # 注意：controller_velicity 拼写需在 Base 修正，这里假设是 controller_velocity
                     # 如果没有 velocity，默认为 0
@@ -275,12 +293,17 @@ class AllRobotTeleopController(RobotTeleopController):
                     ik_target = None
 
                 # 获取夹爪数据
-                gripper_data = copy.deepcopy(self.gripper_pos_target.get(arm_name, {}))
+                raw_gripper_data = copy.deepcopy(self.gripper_pos_target.get(arm_name, {}))
+                # #!!! DEBUG: 发送给硬件的夹爪指令强制二值化，阈值 > 0.1 为 1，否则为 0
+                # gripper_data = {
+                #     joint_name: 1 if gripper_pos_target > 0.1 else 0
+                #     for joint_name, gripper_pos_target in raw_gripper_data.items()
+                # }
 
                 new_commands[arm_name] = {
                     'q_des': q_des,
                     'dq_des': dq_des,
-                    'gripper_pos': gripper_data,
+                    'gripper_pos': raw_gripper_data,
                     'ik_target': ik_target
                 }
 
@@ -312,7 +335,7 @@ class AllRobotTeleopController(RobotTeleopController):
         控制线程拥有最高优先级，严格按照 50Hz (20ms) 周期运行。
         无论 IK 是否算完，它都会到点发送。
         """
-        print(f"[Control_Thread] {TerminalColor.OKGREEN}50Hz 控制发送线程启动{TerminalColor.ENDC}")
+        print(f"[Control_Thread] {TerminalColor.OKGREEN}{self.control_rate_hz}Hz 控制发送线程启动{TerminalColor.ENDC}")
         
         period = 1.0 / self.control_rate_hz  # 0.02s
         next_wake_time = time.perf_counter() # 使用高精度计时器
@@ -412,6 +435,12 @@ class AllRobotTeleopController(RobotTeleopController):
             # 如果 IK 线程算出的是 None (未激活)，则不发送新的 q_des
             # Controller 会保持上一次的位置 (或者您可以显式发送当前位置)
             controller.q_des = arm_data['q_des']
+            
+            controller.q_des_gripper = [
+                arm_data['gripper_pos'][j_name] 
+                for j_name in arm_data['gripper_pos']
+            ]
+            
             if arm_data['dq_des'] is not None:
                 controller.dq_des = arm_data['dq_des']
                      
@@ -419,14 +448,9 @@ class AllRobotTeleopController(RobotTeleopController):
             if self.active.get(arm_name, False):
                 controller.publish_arm_control() # 发布 ROS 话题
                 controller.publish_dq_target()
-                controller.publish_ik_vel_target()
+                # 2. 处理夹爪
+                controller.publish_gripper_control()
         
-            # 2. 处理夹爪
-            controller.q_des_gripper = [
-                arm_data['gripper_pos'][j_name] 
-                for j_name in arm_data['gripper_pos']
-            ]
-            controller.publish_gripper_control()
             
             # 3. 更新 Debug 信息 (可选)
             if arm_data['ik_target']:
@@ -487,6 +511,11 @@ class AllRobotTeleopController(RobotTeleopController):
                 # 只要不是 IDLE (即 RECORDING 或 PAUSED)，按一下就停止并保存
                 print("[Logic] B键按下 -> 检测到录制中 -> 停止保存")
                 self.data_logger.stop_episode()
+                # episode 保存后，异步执行一次机械臂初始化，避免阻塞控制循环
+                threading.Thread(
+                    target=self.init_arm,
+                    daemon=True,
+                ).start()
         
         self._prev_b_button_state = b_button_state
         
@@ -612,261 +641,4 @@ class AllRobotTeleopController(RobotTeleopController):
             },
             
         }
-            
-    def get_all_joint_velocities(self, arm_name):
-        """
-        获取指定手臂的所有关节速度，先进行【加速度限幅】，再经过 OneEuroFilter 滤波去噪。
-        """
-        # ================= 配置区域 =================
-        # 最大允许加速度 (rad/s^2)。
-        # 建议值：5.0 ~ 20.0。如果不确定，先设大一点(如 15.0)以免拖慢正常运动。
-        MAX_ACCEL_LIMIT = 12.0  
-        # ===========================================
-
-        # 1. 获取位置切片
-        q_slice = self.placo_arm_joint_slice[arm_name]
-        
-        # 2. 转换为速度切片 (索引 -1)
-        v_slice = slice(q_slice.start - 1, q_slice.stop - 1)
-        
-        # 3. 读取原始速度 (含噪声)
-        # 务必转为 numpy array 以支持后续的向量运算
-        raw_velocities = np.array(self.placo_robot.state.qd[v_slice], dtype=float)
-        
-        # 获取当前时间
-        current_time = time.perf_counter()
-
-        # 4. === [新增] 加速度限幅 (Slew Rate Limiter) ===
-        # 初始化存储结构
-        if not hasattr(self, '_acc_limit_state'):
-            self._acc_limit_state = {}
-
-        if arm_name not in self._acc_limit_state:
-            # 第一次运行：无法计算差分，直接通过，并初始化状态
-            clamped_velocities = raw_velocities
-            self._acc_limit_state[arm_name] = {
-                'last_vel': raw_velocities,
-                'last_time': current_time
-            }
-        else:
-            # 获取上一帧状态
-            state = self._acc_limit_state[arm_name]
-            last_vel = state['last_vel']
-            last_time = state['last_time']
-            
-            # 计算 dt (时间差)
-            dt = current_time - last_time
-            
-            # 异常处理：防止 dt 过小导致除零或逻辑错误
-            if dt < 1e-5: 
-                dt = 1e-5 
-            
-            # A. 计算本帧允许的最大速度变化量 (Delta V = a * t)
-            max_delta_v = MAX_ACCEL_LIMIT * dt
-            
-            # B. 计算原始数据的变化量
-            delta_v = raw_velocities - last_vel
-            
-            # C. 核心限幅：将变化量钳制在 [-max, +max] 之间
-            # np.clip 会对数组中每个关节单独处理，保留方向
-            clamped_delta_v = np.clip(delta_v, -max_delta_v, max_delta_v)
-            
-            # D. 得到限幅后的速度 (这是物理上可行的速度)
-            clamped_velocities = last_vel + clamped_delta_v
-            
-            # 更新状态供下一帧使用
-            self._acc_limit_state[arm_name]['last_vel'] = clamped_velocities
-            self._acc_limit_state[arm_name]['last_time'] = current_time
-
-        # 5. === 应用 OneEuroFilter 滤波 ===
-        # 防御性编程：确保滤波器存在
-        if not hasattr(self, 'joint_vel_filters') or arm_name not in self.joint_vel_filters:
-            if not hasattr(self, 'joint_vel_filters'): self.joint_vel_filters = {}
-            # 注意：既然前面已经有了加速度限幅，这里的 min_cutoff 可以适当调低(如 0.5 或 0.1)
-            # 因为大的尖刺已经被切掉了，滤波器只需负责平滑即可
-            self.joint_vel_filters[arm_name] = OneEuroFilter(min_cutoff=0.2, beta=0.8)
-        
-        # 【关键】把限幅后的速度 (clamped_velocities) 传给滤波器，而不是 raw_velocities
-        filtered_velocities = self.joint_vel_filters[arm_name].process(clamped_velocities, current_time)
-        
-        # [调试打印] 看看限幅器有没有生效 (观察 diff 是否被截断)
-        # if arm_name == "right_arm":
-        #    print(f"Raw: {raw_velocities[3]:.3f} | Clamped: {clamped_velocities[3]:.3f} | Filtered: {filtered_velocities[3]:.3f}")
-
-        return filtered_velocities   
-    # def get_all_joint_velocities(self, arm_name):
-    #     """
-    #     获取指定手臂的所有关节速度，并经过 OneEuroFilter 滤波去噪。
-    #     """
-        
-    #     # ================= 配置区域 =================
-    #     # 最大允许加速度 (rad/s^2)。
-    #     # 建议值：5.0 ~ 20.0。如果不确定，先设大一点(如 15.0)以免拖慢正常运动。
-    #     MAX_ACCEL_LIMIT = 12.0  
-    #     # ===========================================
-        
-    #     # 1. 获取位置切片
-    #     q_slice = self.placo_arm_joint_slice[arm_name]
-        
-    #     # 2. 转换为速度切片 (索引 -1)
-    #     v_slice = slice(q_slice.start - 1, q_slice.stop - 1)
-        
-    #     # 3. 读取原始速度 (含噪声)
-    #     raw_velocities = self.placo_robot.state.qd[v_slice]
-        
-    #     # 4. === 应用 OneEuroFilter 滤波 ===
-    #     # 获取高精度时间戳
-    #     current_time = time.perf_counter()
-        
-    #     # 防御性编程：确保滤波器存在
-    #     if not hasattr(self, 'joint_vel_filters') or arm_name not in self.joint_vel_filters:
-    #         # 如果没初始化，就现场造一个，防止报错
-    #         if not hasattr(self, 'joint_vel_filters'): self.joint_vel_filters = {}
-    #         self.joint_vel_filters[arm_name] = OneEuroFilter(min_cutoff=0.2, beta=1.0)
-        
-    #     # 执行滤波 (输入/输出都是 6维 numpy 数组)
-    #     # process 内部会自动处理 dt，所以即便调用频率有波动也能保持稳定
-    #     filtered_velocities = self.joint_vel_filters[arm_name].process(raw_velocities, current_time)
-        
-    #     # [可选调试] 打印对比
-    #     # print(f"[{arm_name}] Raw: {raw_velocities[3]:.3f} -> Filtered: {filtered_velocities[3]:.3f}")
-
-    #     return filtered_velocities
-    
-    
-    # def calculate_feedforward_velocity(self, arm_name, controller_vel):
-    #     """
-    #     Final verified version:
-    #     - twist(world) -> dq (model joint direction, NO manual sign flip)
-    #     - adaptive DLS for singularity
-    #     - task-space (twist) limiting before IK
-    #     - joint velocity limiting using ARM_VELOCITY_LIMITS
-    #     - mild temporal smoothing
-    #     """
-
-    #     # =========================
-    #     # 0. 缓存初始化
-    #     # =========================
-    #     if not hasattr(self, "_dq_last"):
-    #         self._dq_last = {}
-    #     if arm_name not in self._dq_last:
-    #         self._dq_last[arm_name] = np.zeros(6, dtype=float)
-
-    #     if not hasattr(self, "_ff_last_print"):
-    #         self._ff_last_print = {"left_arm": 0.0, "right_arm": 0.0}
-
-    #     now = time.perf_counter()
-
-    #     try:
-    #         # =========================
-    #         # 1. 输入 twist 整理
-    #         # =========================
-    #         v_cart = np.asarray(controller_vel, dtype=float).reshape(6,)
-
-    #         # 极小速度直接归零（防抖）
-    #         if np.linalg.norm(v_cart) < 1e-6:
-    #             self._dq_last[arm_name].fill(0.0)
-    #             return self._dq_last[arm_name]
-
-    #         # -------- task-space 限幅（非常关键）--------
-    #         # 经验值：与你 XR 手感 + 机械臂能力匹配
-    #         max_lin = 0.40   # m/s
-    #         max_ang = 1.20   # rad/s
-
-    #         v_lin = v_cart[:3].copy()
-    #         v_ang = v_cart[3:].copy()
-
-    #         ln = np.linalg.norm(v_lin)
-    #         an = np.linalg.norm(v_ang)
-
-    #         if ln > max_lin:
-    #             v_lin *= (max_lin / ln)
-    #         if an > max_ang:
-    #             v_ang *= (max_ang / an)
-
-    #         v_cart = np.hstack([v_lin, v_ang])
-
-    #         # =========================
-    #         # 2. Jacobian 提取（你已验证正确）
-    #         # =========================
-    #         link_name = self.manipulator_config[arm_name]["link_name"]
-    #         J_full = self.placo_robot.frame_jacobian(link_name, "world")
-
-    #         n_joints = len(self.all_joint_names_cache)
-    #         base_dofs = int(J_full.shape[1] - n_joints)
-
-    #         arm_idx = self.arm_joint_indices[arm_name]          # len=6
-    #         arm_cols = [base_dofs + i for i in arm_idx]
-
-    #         J_arm = J_full[:, arm_cols]                          # (6,6)
-    #         if J_arm.shape != (6, 6):
-    #             raise RuntimeError(f"[{arm_name}] J_arm shape invalid: {J_arm.shape}")
-
-    #         # =========================
-    #         # 3. DLS 求解 dq
-    #         # =========================
-    #         U, S, Vt = np.linalg.svd(J_arm, full_matrices=False)
-
-    #         sigma_min = float(S[-1])
-    #         cond = float(S[0] / max(sigma_min, 1e-9))
-
-    #         # -------- 自适应阻尼（已验证非常适合你）--------
-    #         lam_min = 0.01
-    #         lam_max = 0.10
-    #         k = 0.02
-    #         lam = lam_min + (lam_max - lam_min) * np.exp(-sigma_min / k)
-
-    #         S_damped = S / (S**2 + lam**2)
-    #         dq = Vt.T @ (S_damped * (U.T @ v_cart))
-
-    #         if not np.all(np.isfinite(dq)):
-    #             raise FloatingPointError("NaN/Inf in dq")
-
-    #         # =========================
-    #         # 4. 关节速度限幅（硬件约束）
-    #         # =========================
-    #         vel_limits = np.asarray(self.vel_limits_array, dtype=float).reshape(6,)
-
-    #         ratios = np.abs(dq) / np.maximum(vel_limits, 1e-9)
-    #         max_ratio = float(np.max(ratios))
-
-    #         if max_ratio > 1.0:
-    #             dq *= (1.0 / max_ratio)
-
-    #         # =========================
-    #         # 5. 平滑（避免 dq 抖动）
-    #         # =========================
-    #         alpha = 0.30
-    #         dq = alpha * dq + (1.0 - alpha) * self._dq_last[arm_name]
-
-    #         # =========================
-    #         # 6. 自检打印（可长期保留）
-    #         # =========================
-    #         if now - self._ff_last_print[arm_name] > 0.5:
-    #             self._ff_last_print[arm_name] = now
-
-    #             v_pred = J_arm @ dq
-    #             err = float(np.linalg.norm(v_pred - v_cart))
-    #             denom = max(np.linalg.norm(v_pred) * np.linalg.norm(v_cart), 1e-9)
-    #             cos = float(np.dot(v_pred, v_cart) / denom)
-
-    #             print(
-    #                 f"[FF_DQ][{arm_name}] cond={cond:.2f}, lam={lam:.3f}, "
-    #                 f"err={err:.4f}, cos={cos:.3f}\n"
-    #                 f"  v_cart={np.array2string(v_cart, precision=3, suppress_small=True)}\n"
-    #                 f"  v_pred={np.array2string(v_pred, precision=3, suppress_small=True)}\n"
-    #                 f"  dq    ={np.array2string(dq, precision=3, suppress_small=True)}"
-    #             )
-
-    #         # =========================
-    #         # 7. 返回并缓存
-    #         # =========================
-    #         self._dq_last[arm_name] = dq
-    #         return dq
-
-    #     except Exception as e:
-    #         print(f"[FF_DQ][{arm_name}] ERROR: {e}")
-    #         # 出错时平滑退化，避免机械臂抽动
-    #         self._dq_last[arm_name] *= 0.8
-    #         return self._dq_last[arm_name]
-
+  

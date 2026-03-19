@@ -73,7 +73,7 @@ def loop():
 
     # Displaying the robot, effector and target
     viz.display(robot.state.q)
-    robot_frame_viz(robot, "right_ee_link")
+    # robot_frame_viz(robot, "right_ee_link")
     frame_viz("target", effector_task.T_world_frame, opacity=0.25 , scale=2.0)
     
 
@@ -81,13 +81,13 @@ def loop():
     if t - last_target_t > 0.1:
         last_target_t = t
         last_targets.append(target)
-        last_targets = last_targets[-50:]
-        points_viz("targets", np.array(last_targets), color=0xaaff00)
+        last_targets = last_targets[-25:]
+        points_viz("targets", np.array(last_targets), color=0xffff00)
         
         T_world_ee = robot.get_T_world_frame("right_ee_link")
         current_position= T_world_ee[0:3, 3]
         last_positions.append(current_position)
-        last_positions = last_positions[-50:]
+        last_positions = last_positions[-25:]
         points_viz("positions", np.array(last_positions), color=0x5C2FC2)
         
     

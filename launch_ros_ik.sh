@@ -1,7 +1,5 @@
 #!/bin/bash
 
-ros2 topic pub --once /right_arm/gripper_cmd my_interfaces/msg/HeaderFloat32 "{data: 0.0}"
-
 # 1. 激活 Conda 环境 (确保路径对)
 source /home/hxd/miniconda3/bin/activate XRobot_py_env
 
@@ -19,6 +17,5 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 echo "Using Python: $(which python)"
 echo "LD_LIBRARY_PATH head: $(echo $LD_LIBRARY_PATH | cut -d: -f1)"
 
-
 # 6. 运行你的 Python 脚本，并传递所有参数 ($@)
-python /home/hxd/code/My_Xrobot/scripts/teleop_robot.py "$@"
+python /home/hxd/code/My_Xrobot/scripts/ros_ik_teleop.py "$@"

@@ -37,11 +37,11 @@ def main(
 
     # 创建并初始化遥操作控制器
     controller = JointcmdController(
-        dataset_path="dataset/default_task_20260309/run_120143/episode_5_120818.h5",
+        dataset_path="dataset/fruits/episode_2_135613.h5",
         robot_urdf_path=robot_urdf_path,      # 机器人URDF路径
         scale_factor=scale_factor,            # 控制缩放因子
         # q_init=q_init,                        # 添加这一行来设置初始关节角度
-        visualize_placo=True,
+        visualize_placo=False,
         control_rate_hz=20,
         self_collision_avoidance_enabled=True,
         

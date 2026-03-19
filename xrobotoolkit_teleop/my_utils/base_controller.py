@@ -23,7 +23,7 @@ from xrobotoolkit_teleop.utils.parallel_gripper_utils import (
 )
 
 SELF_COLLISION_MARGIN = 0.075  # 自碰撞避免的默认安全距离 [m]
-SELF_COLLISION_TRIGGER = 0.2  # 自碰撞避免的触发距离   [m]
+SELF_COLLISION_TRIGGER = 0.15  # 自碰撞避免的触发距离   [m]
 
 class BaseController(abc.ABC):
     """遥操作控制器基类，定义了遥操作的基本框架和通用功能"""
@@ -40,7 +40,7 @@ class BaseController(abc.ABC):
         dt: float,
         self_collision_avoidance_enabled: bool = False,
         enable_log_data: bool = False,
-        with_vel: bool = True,
+        with_vel: bool = False,
 
     ):
         """初始化遥操作控制器基类"""
@@ -52,6 +52,7 @@ class BaseController(abc.ABC):
         self.q_init = q_init
         self.dt = dt
         self.with_vel = with_vel
+    # !!!DUBUG
         # self.xr_client = XrClient()
         self.xr_client=FilteredXrClient()
         
@@ -198,7 +199,7 @@ class BaseController(abc.ABC):
                 ee_target[:3, 3] = ee_xyz
                 self.effector_task[name] = self.solver.add_frame_task(config["link_name"], ee_target)
                 print(f"[placo_setup] Created pose task for {name} -> {config['link_name']}")
-                self.effector_task[name].configure(name, "soft", 1.0, 0.05)
+                self.effector_task[name].configure(name, "soft", 1.0, 0.25)
 
             manipulability = self.solver.add_manipulability_task(config["link_name"], "both", 1.0) 
             manipulability.configure("manipulability", "soft", 0.1)    #奇异性约束
@@ -336,7 +337,7 @@ class BaseController(abc.ABC):
         self.placo_vis.display(self.placo_robot.state.q)
         
         for name, config in self.manipulator_config.items():
-            robot_frame_viz(self.placo_robot, config["link_name"])
+            # robot_frame_viz(self.placo_robot, config["link_name"])
             
             # 根据控制模式显示适当的可视化
             if self.effector_control_mode[name] == "position":
@@ -347,14 +348,6 @@ class BaseController(abc.ABC):
             else:
                 frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
 
-            # 可视化运动追踪器目标（如果配置了）
-            if "motion_tracker" in config and name in self.motion_tracker_task:
-                link_target = config["motion_tracker"]["link_target"]
-                robot_frame_viz(self.placo_robot, link_target)
-                tracker_frame = np.eye(4)
-                tracker_frame[:3, 3] = self.motion_tracker_task[name].target_world
-                frame_viz(f"vis_tracker_{name}", tracker_frame)
-                            
 
 
     def _update_placo_viz(self):
@@ -362,7 +355,7 @@ class BaseController(abc.ABC):
         self.placo_vis.display(self.placo_robot.state.q)
         
         for name, config in self.manipulator_config.items():
-            robot_frame_viz(self.placo_robot, config["link_name"])
+            # robot_frame_viz(self.placo_robot, config["link_name"])
             
             # 根据控制模式更新可视化
             if self.effector_control_mode[name] == "position":
@@ -371,14 +364,6 @@ class BaseController(abc.ABC):
                 frame_viz(f"vis_target_{name}", target_frame)
             else:
                 frame_viz(f"vis_target_{name}", self.effector_task[name].T_world_frame)
-
-            # 更新运动追踪器可视化（如果配置了）
-            if "motion_tracker" in config and name in self.motion_tracker_task:
-                link_target = config["motion_tracker"]["link_target"]
-                robot_frame_viz(self.placo_robot, link_target)
-                tracker_frame = np.eye(4)
-                tracker_frame[:3, 3] = self.motion_tracker_task[name].target_world
-                frame_viz(f"vis_tracker_{name}", tracker_frame)
 
     def sync_end_effector_poses_to_placo_tasks(self):
         """将当前末端执行器位姿同步到placo任务"""

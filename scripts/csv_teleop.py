@@ -28,7 +28,7 @@ def main(
     robot_urdf_path: str = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf"),
     # robot_urdf_path: str = os.path.join(ASSET_PATH, "right_rm65f/right_rm65.urdf"),
     # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.3
-    scale_factor: float = 0.5,
+    scale_factor: float = 1.0,
 ):
     rclpy.init()
 

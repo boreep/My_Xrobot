@@ -103,9 +103,9 @@ Stephen Brawner (brawner@gmail.com)
     type="fixed">
     <origin
       xyz="-0.048059 0 0.86826"
-      rpy="-1.5708 0.4014 0" />
+      rpy="-1.5708 0.4835 0" />
     <!-- #################### -->
-    <!-- 0.4014代表腰部默认转动了23度-->
+    <!--p=0.4835代表腰部默认转动了27.7度-->
     <!-- #################### -->
 
     <parent
@@ -516,13 +516,14 @@ Stephen Brawner (brawner@gmail.com)
         xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
-        <box
-          size="0.02 0.05 0.184" />
+        <cylinder
+          radius="0.025"
+          length="0.184" />
       </geometry>
       <material
         name="BoxMaterial">
         <color
-          rgba="0.106 0.235 0.325 0.5" />
+          rgba="0.7 0.7 0.7 0.75" />
       </material>
     </visual>
     <collision>
@@ -530,8 +531,9 @@ Stephen Brawner (brawner@gmail.com)
         xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
-        <box
-          size="0.04 0.05 0.184" />
+        <cylinder
+          radius="0.025"
+          length="0.184" />
       </geometry>
     </collision>
   </link>
@@ -956,13 +958,14 @@ Stephen Brawner (brawner@gmail.com)
         xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
-        <box
-          size="0.02 0.05 0.184" />
+        <cylinder
+          radius="0.025"
+          length="0.184" />
       </geometry>
       <material
         name="BoxMaterial">
         <color
-          rgba="0.106 0.235 0.325 0.5" />
+          rgba="0.7 0.7 0.7 0.75" />
       </material>
     </visual>
     <collision>
@@ -970,8 +973,9 @@ Stephen Brawner (brawner@gmail.com)
         xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
-        <box
-          size="0.04 0.05 0.184" />
+        <cylinder
+          radius="0.025"
+          length="0.184" />
       </geometry>
     </collision>
   </link>

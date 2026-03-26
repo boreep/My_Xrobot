@@ -28,7 +28,13 @@ def main(
     robot_urdf_path: str = os.path.join(ASSET_PATH, "all_robot/urdfmodel.urdf"),
     # robot_urdf_path: str = os.path.join(ASSET_PATH, "right_rm65f/right_rm65.urdf"),
     # scale_factor: 控制缩放因子，增大操作幅度，默认值为1.3
-    scale_factor: float = 1,
+    scale_factor: float = 2.5,
+    position_feedback_enabled: bool = True,
+    position_feedback_gain: float = 1,
+    position_feedback_max_step: float = 0.1,
+    position_feedback_max_total: float = 0.5,
+    csv_log_enabled: bool = True,
+    csv_log_path: str = "data/with_feedback_high.csv",
 ):
     rclpy.init()
 
@@ -36,23 +42,29 @@ def main(
 
     # 创建并初始化遥操作控制器
     controller = DatasetController(
-        dataset_path="dataset/default_task_20260318/run_122523/episode_2_122830.h5",
+        dataset_path="dataset/test_dataset_20260326/run_174811/episode_0_174856.h5",
         robot_urdf_path=robot_urdf_path,      # 机器人URDF路径
         scale_factor=scale_factor,            # 控制缩放因子
         q_init=q_init,                        # 添加这一行来设置初始关节角度
-        visualize_placo=False,
-        control_rate_hz=15,
-        self_collision_avoidance_enabled=True,
+        visualize_placo=True,
+        control_rate_hz=40,
+        position_feedback_enabled=position_feedback_enabled,
+        position_feedback_gain=position_feedback_gain,
+        position_feedback_max_step=position_feedback_max_step,
+        position_feedback_max_total=position_feedback_max_total,
+        csv_log_enabled=csv_log_enabled,
+        csv_log_path=(csv_log_path or None),
+        # self_collision_avoidance_enabled=True,
         
     )
 
-    controller.solver.add_kinetic_energy_regularization_task(1e-6)
+    # controller.solver.add_kinetic_energy_regularization_task(1e-6)
     
 
     # 启动控制器运行
-    controller.init_arm()
+    # controller.init_arm()
     
-
+    
     controller.run()
 
 

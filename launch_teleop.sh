@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ros2 topic pub --once /right_arm/gripper_cmd my_interfaces/msg/HeaderFloat32 "{data: 0.0}"
+# ros2 topic pub --once /right_arm/gripper_cmd my_interfaces/msg/HeaderFloat32 "{data: 0.0}"
 
 # 1. 激活 Conda 环境 (确保路径对)
 source /home/hxd/miniconda3/bin/activate XRobot_py_env

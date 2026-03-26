@@ -42,16 +42,16 @@ def main(
         scale_factor=scale_factor,            # 控制缩放因子
         # q_init=q_init,                        # 添加这一行来设置初始关节角度
         visualize_placo=True,
-        control_rate_hz=20,
+        control_rate_hz=40,
         self_collision_avoidance_enabled=True,
         
     )
 
-    controller.solver.add_kinetic_energy_regularization_task(1e-5)
+    # controller.solver.add_kinetic_energy_regularization_task(1e-5)
     
 
     # 启动控制器运行
-    controller.init_arm()
+    # controller.init_arm()
     controller.run()
 
 

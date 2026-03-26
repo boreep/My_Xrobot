@@ -13,9 +13,10 @@ from geometry_msgs.msg import Pose
 
 # LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([-90, -45, -45, -90, 23, 0.0]))
 # RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 45, 45, 90, 23, -120]))
-RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([110, 45, 45, 0, 0, 0]))
+# RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([110, 45, 45, 0, 0, 0]))
+RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([90, 60, 75, 0, -45, 0]))
 LEFT_INITIAL_JOINT_DEG = -RIGHT_INITIAL_JOINT_DEG.copy()
-# RIGHT_INITIAL_JOINT_DEG = np.deg2rad(np.array([0, 0, 0, 0, 0, 0.0]))
+# LEFT_INITIAL_JOINT_DEG = np.deg2rad(np.array([0, 0, 0, 0, 0, 0.0]))
 
 # 通用关节速度限制（不带左右前缀，仅关节编号）
 HARDWARE_MAX_VELOCITY = {
@@ -26,7 +27,7 @@ HARDWARE_MAX_VELOCITY = {
     "joint_5": 3.927,
     "joint_6": 3.927,
 }
-VELOCITY_SCALE_FACTOR = 0.5  # 当前设置为 50% 性能
+VELOCITY_SCALE_FACTOR = 0.6 # 当前设置为 50% 性能
 
 ARM_VELOCITY_LIMITS = {
     joint: limit * VELOCITY_SCALE_FACTOR 
@@ -118,6 +119,12 @@ class RM65Controller(Node):
             self.arm_state_callback, 
             qos
         )
+        self.ee_pose_sub = self.create_subscription(
+            Pose,
+            f"{arm_side}/rm_driver/udp_arm_position",
+            self.ee_pose_callback,
+            qos
+        )
         
         self.arm_side = arm_side
 # 当前状态量q
@@ -125,6 +132,8 @@ class RM65Controller(Node):
         # self.qvel = [0.0] * 6
         # self.qpos_gripper = 0.0
         self.timestamp = 0.0
+        self.ee_xyz = None
+        self.ee_pose_timestamp = 0.0
 
 #目标q
         self.q_des = None
@@ -215,6 +224,10 @@ class RM65Controller(Node):
         # ROS2 Time conversion
         self.timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
+    def ee_pose_callback(self, msg: Pose):
+        self.ee_xyz = np.array([msg.position.x, msg.position.y, msg.position.z], dtype=np.float64)
+        self.ee_pose_timestamp = self.get_clock().now().nanoseconds * 1e-9
+
     def publish_arm_control(self):
         """
         Publishes arm control messages.
@@ -295,6 +308,7 @@ class RM65Controller(Node):
         self.destroy_publisher(self.pub)
         self.destroy_publisher(self.gripper_pub)
         self.destroy_subscription(self.sub)
+        self.destroy_subscription(self.ee_pose_sub)
         
 
 
